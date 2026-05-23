@@ -1,10 +1,19 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { MainLayout } from './layouts/MainLayout';
+import { ProtectedRoute } from './components/ProtectedRoute';
 import { Dashboard } from './pages/Dashboard';
 import { Automations } from './pages/Automations';
 import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
 import { NotFound } from './pages/NotFound';
+
+function Protected({ children }: { children: React.ReactNode }) {
+  return (
+    <ProtectedRoute>
+      <MainLayout>{children}</MainLayout>
+    </ProtectedRoute>
+  );
+}
 
 export default function App() {
   return (
@@ -13,20 +22,17 @@ export default function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
 
-        {/* Dashboard Routes wrapper with Layout */}
-        <Route path="/dashboard" element={<MainLayout><Dashboard /></MainLayout>} />
+        <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
+        <Route path="/automations" element={<Protected><Automations /></Protected>} />
 
-        {/* Placeholder for other routes shown in the sidebar */}
-        <Route path="/cartera" element={<MainLayout><PlaceholderPage title="Cartera" /></MainLayout>} />
-        <Route path="/estudiantes" element={<MainLayout><PlaceholderPage title="Estudiantes" /></MainLayout>} />
-        <Route path="/acuerdos" element={<MainLayout><PlaceholderPage title="Acuerdos" /></MainLayout>} />
-        <Route path="/gestiones" element={<MainLayout><PlaceholderPage title="Gestiones" /></MainLayout>} />
-        <Route path="/predictive-risk" element={<MainLayout><PlaceholderPage title="Predicción de Riesgo" /></MainLayout>} />
-        <Route path="/automations" element={<MainLayout><Automations /></MainLayout>} />
-        <Route path="/reports" element={<MainLayout><PlaceholderPage title="Reportes" /></MainLayout>} />
-        <Route path="/settings" element={<MainLayout><PlaceholderPage title="Configuración" /></MainLayout>} />
+        <Route path="/cartera" element={<Protected><PlaceholderPage title="Cartera" /></Protected>} />
+        <Route path="/estudiantes" element={<Protected><PlaceholderPage title="Estudiantes" /></Protected>} />
+        <Route path="/acuerdos" element={<Protected><PlaceholderPage title="Acuerdos" /></Protected>} />
+        <Route path="/gestiones" element={<Protected><PlaceholderPage title="Gestiones" /></Protected>} />
+        <Route path="/predictive-risk" element={<Protected><PlaceholderPage title="Predicción de Riesgo" /></Protected>} />
+        <Route path="/reports" element={<Protected><PlaceholderPage title="Reportes" /></Protected>} />
+        <Route path="/settings" element={<Protected><PlaceholderPage title="Configuración" /></Protected>} />
 
-        {/* 404 fallback */}
         <Route path="/404" element={<NotFound />} />
         <Route path="*" element={<Navigate to="/404" replace />} />
       </Routes>

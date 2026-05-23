@@ -1,13 +1,32 @@
-import { FormEvent } from 'react';
-import { Mail, Lock, Eye, LogIn, TrendingDown, TrendingUp, FileText, Brain } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { FormEvent, useState } from 'react';
+import { Mail, Lock, Eye, EyeOff, LogIn, TrendingDown, TrendingUp, FileText, Brain, Loader2, AlertCircle } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { login } from '../services/auth';
+import { getApiErrorMessage } from '../services/api';
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const redirectTo = (location.state as { from?: string } | null)?.from ?? '/dashboard';
 
-  const handleLogin = (e: FormEvent) => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
-    navigate('/dashboard');
+    setError(null);
+    setLoading(true);
+    try {
+      await login(email.trim(), password);
+      navigate(redirectTo, { replace: true });
+    } catch (err) {
+      setError(getApiErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -126,13 +145,19 @@ export function LoginPage() {
         <form onSubmit={handleLogin} className="space-y-5">
           {/* Email */}
           <div className="space-y-1.5">
-            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">Correo Electrónico</label>
+            <label htmlFor="login-email" className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">Correo Electrónico</label>
             <div className="relative">
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
               <input
+                id="login-email"
                 type="email"
+                required
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 placeholder="nombre@universidad.edu"
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/20 font-medium"
+                disabled={loading}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/20 font-medium disabled:opacity-60"
               />
             </div>
           </div>
@@ -140,18 +165,29 @@ export function LoginPage() {
           {/* Password */}
           <div className="space-y-1.5">
             <div className="flex justify-between items-center">
-              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">Contraseña</label>
+              <label htmlFor="login-password" className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">Contraseña</label>
               <a href="#" className="text-[11px] font-bold text-cyan-600 hover:underline">¿Olvidaste tu contraseña?</a>
             </div>
             <div className="relative">
               <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
               <input
-                type="password"
+                id="login-password"
+                type={showPassword ? 'text' : 'password'}
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••••"
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3.5 pl-12 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/20 font-medium"
+                disabled={loading}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3.5 pl-12 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/20 font-medium disabled:opacity-60"
               />
-              <button type="button" className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-navy-dark">
-                <Eye size={18} />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-navy-dark"
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
           </div>
@@ -167,14 +203,23 @@ export function LoginPage() {
             <label htmlFor="remember" className="text-sm font-medium text-slate-600">Recordarme por 30 días</label>
           </div>
 
+          {/* Error */}
+          {error && (
+            <div role="alert" className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs font-medium text-red-700">
+              <AlertCircle size={16} className="shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+
           {/* Submit */}
           <button
             type="submit"
-            className="w-full py-3.5 rounded-xl font-bold text-white text-sm flex items-center justify-center gap-2 shadow-xl transition-all hover:opacity-90 hover:scale-[1.01] active:scale-[0.99]"
+            disabled={loading}
+            className="w-full py-3.5 rounded-xl font-bold text-white text-sm flex items-center justify-center gap-2 shadow-xl transition-all hover:opacity-90 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:scale-100"
             style={{ background: 'linear-gradient(90deg, #00b4d8 0%, #00e5ff 100%)' }}
           >
-            <LogIn size={18} />
-            Iniciar sesión
+            {loading ? <Loader2 size={18} className="animate-spin" /> : <LogIn size={18} />}
+            {loading ? 'Iniciando sesión...' : 'Iniciar sesión'}
           </button>
         </form>
 
