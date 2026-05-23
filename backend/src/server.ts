@@ -19,6 +19,7 @@ import acuerdosRoutes from './routes/acuerdos.routes';
 import automatizacionesRoutes from './routes/automatizaciones.routes';
 import prediccionRoutes from './routes/prediccion.routes';
 import openfinanceRoutes from './routes/openfinance.routes';
+import estrategiasRoutes from './routes/estrategias.routes';
 
 const app = express();
 
@@ -45,6 +46,7 @@ app.use('/api/acuerdos', authenticate, acuerdosRoutes);
 app.use('/api/automatizaciones', authenticate, automatizacionesRoutes);
 app.use('/api/prediccion', authenticate, prediccionRoutes);
 app.use('/api/openfinance', authenticate, openfinanceRoutes);
+app.use('/api/estrategias', authenticate, estrategiasRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({
