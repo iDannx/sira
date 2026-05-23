@@ -18,6 +18,7 @@ import carteraRoutes from './routes/cartera.routes';
 import acuerdosRoutes from './routes/acuerdos.routes';
 import automatizacionesRoutes from './routes/automatizaciones.routes';
 import prediccionRoutes from './routes/prediccion.routes';
+import openfinanceRoutes from './routes/openfinance.routes';
 
 const app = express();
 
@@ -43,6 +44,7 @@ app.use('/api/cartera', authenticate, carteraRoutes);
 app.use('/api/acuerdos', authenticate, acuerdosRoutes);
 app.use('/api/automatizaciones', authenticate, automatizacionesRoutes);
 app.use('/api/prediccion', authenticate, prediccionRoutes);
+app.use('/api/openfinance', authenticate, openfinanceRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({
