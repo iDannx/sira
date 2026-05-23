@@ -106,7 +106,13 @@ export function Dashboard() {
 
   if (!data) return null;
 
-  const { stats, distribucion, evolucion, riesgo } = data;
+  // Extracción defensiva: si la API responde con un shape parcial,
+  // cada sección del JSX se renderiza con un guard que evita acceder
+  // a propiedades de un objeto/array indefinido.
+  const stats = data.stats ?? null;
+  const distribucion = data.distribucion ?? [];
+  const evolucion = data.evolucion ?? [];
+  const riesgo = data.riesgo ?? null;
 
   return (
     <div className="space-y-8 pb-12">
@@ -117,12 +123,14 @@ export function Dashboard() {
         <p className="text-slate-500 text-sm font-medium">Este es el resumen general de la cartera y la gestión de hoy.</p>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard title="Cartera total"        value={formatCOPCompact(stats.carteraTotal)}     trend={`${stats.tendencias.carteraTotal} vs mes anterior`}    icon={Landmark}       color="blue"          areaData={evolucion} />
-        <StatCard title="Cartera vencida"      value={formatCOPCompact(stats.carteraVencida)}   trend={`${stats.tendencias.carteraVencida} vs mes anterior`}  icon={AlertCircle}    color="purple"  isBadTrend areaData={evolucion} />
-        <StatCard title="Cartera al día"       value={formatCOPCompact(stats.carteraAlDia)}     trend={`${stats.tendencias.carteraAlDia} vs mes anterior`}    icon={CircleCheckBig} color="emerald"       areaData={evolucion} />
-        <StatCard title="Recuperación del mes" value={formatCOPCompact(stats.recuperacionMes)}  trend={`${stats.tendencias.recuperacionMes} vs mes anterior`} icon={BarChart3}      color="indigo"        areaData={evolucion} />
-      </div>
+      {stats && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <StatCard title="Cartera total"        value={formatCOPCompact(stats.carteraTotal ?? 0)}     trend={`${stats.tendencias?.carteraTotal ?? '+0%'} vs mes anterior`}    icon={Landmark}       color="blue"          areaData={evolucion} />
+          <StatCard title="Cartera vencida"      value={formatCOPCompact(stats.carteraVencida ?? 0)}   trend={`${stats.tendencias?.carteraVencida ?? '+0%'} vs mes anterior`}  icon={AlertCircle}    color="purple"  isBadTrend areaData={evolucion} />
+          <StatCard title="Cartera al día"       value={formatCOPCompact(stats.carteraAlDia ?? 0)}     trend={`${stats.tendencias?.carteraAlDia ?? '+0%'} vs mes anterior`}    icon={CircleCheckBig} color="emerald"       areaData={evolucion} />
+          <StatCard title="Recuperación del mes" value={formatCOPCompact(stats.recuperacionMes ?? 0)}  trend={`${stats.tendencias?.recuperacionMes ?? '+0%'} vs mes anterior`} icon={BarChart3}      color="indigo"        areaData={evolucion} />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-12 xl:col-span-5 glass-card rounded-3xl p-8">
@@ -137,52 +145,60 @@ export function Dashboard() {
           </div>
 
           <div className="space-y-5">
+            {distribucion.length === 0 && (
+              <p className="text-xs text-slate-400 font-medium">Aún no hay distribución de cartera disponible.</p>
+            )}
             {distribucion.map((item) => {
-              const s = CAT_STYLES[item.categoria] ?? CAT_STYLES.A;
+              const categoria = item?.categoria;
+              const porcentaje = item?.porcentaje ?? 0;
+              const monto = item?.monto ?? 0;
+              const s = (categoria && CAT_STYLES[categoria]) ?? CAT_STYLES.A;
               return (
-                <div key={item.categoria} className="flex items-center gap-3">
+                <div key={categoria ?? Math.random()} className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${s.iconBg}`}>
                     <s.Icon size={18} className={s.iconColor} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-semibold text-slate-600 mb-1.5">
-                      <span className="font-bold mr-1.5 text-slate-700">{item.categoria}</span>{calificacionLabel(item.categoria)}
+                      <span className="font-bold mr-1.5 text-slate-700">{categoria ?? '—'}</span>{categoria ? calificacionLabel(categoria) : ''}
                     </p>
                     <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full" style={{ width: `${item.porcentaje}%`, backgroundColor: s.bar }} />
+                      <div className="h-full rounded-full" style={{ width: `${porcentaje}%`, backgroundColor: s.bar }} />
                     </div>
                   </div>
-                  <span className="text-xs font-bold text-slate-700 shrink-0 w-32 text-right" title={formatCOP(item.monto)}>
-                    {formatCOPCompact(item.monto)}
+                  <span className="text-xs font-bold text-slate-700 shrink-0 w-32 text-right" title={formatCOP(monto)}>
+                    {formatCOPCompact(monto)}
                   </span>
                   <div className={`px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 w-14 text-center ${s.badgeBg} ${s.badgeText}`}>
-                    {formatPorcentaje(item.porcentaje)}
+                    {formatPorcentaje(porcentaje)}
                   </div>
                 </div>
               );
             })}
           </div>
 
-          <div className="mt-6 pt-5 border-t border-slate-100 grid grid-cols-2 gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
-                <PieIcon size={18} className="text-blue-500" />
+          {stats && (
+            <div className="mt-6 pt-5 border-t border-slate-100 grid grid-cols-2 gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
+                  <PieIcon size={18} className="text-blue-500" />
+                </div>
+                <div>
+                  <p className="text-[10px] text-slate-400 font-medium">Cartera total</p>
+                  <p className="text-sm font-bold text-slate-800">{formatCOP(stats.carteraTotal ?? 0)}</p>
+                </div>
               </div>
-              <div>
-                <p className="text-[10px] text-slate-400 font-medium">Cartera total</p>
-                <p className="text-sm font-bold text-slate-800">{formatCOP(stats.carteraTotal)}</p>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center shrink-0">
+                  <TrendingUp size={18} className="text-emerald-500" />
+                </div>
+                <div>
+                  <p className="text-[10px] text-slate-400 font-medium">Variación vs mes anterior</p>
+                  <p className="text-sm font-bold text-emerald-500">{stats.tendencias?.carteraTotal ?? '+0%'}</p>
+                </div>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center shrink-0">
-                <TrendingUp size={18} className="text-emerald-500" />
-              </div>
-              <div>
-                <p className="text-[10px] text-slate-400 font-medium">Variación vs mes anterior</p>
-                <p className="text-sm font-bold text-emerald-500">{stats.tendencias.carteraTotal}</p>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
 
         <div className="lg:col-span-12 xl:col-span-7 glass-card rounded-3xl p-8">
@@ -248,39 +264,41 @@ export function Dashboard() {
             </button>
           </div>
 
-          <RiesgoBody riesgo={riesgo} />
+          {riesgo && <RiesgoBody riesgo={riesgo} />}
 
           <div className="border-t border-slate-100 my-6" />
 
-          <div className="grid grid-cols-3 gap-4 mb-5">
-            <BottomStat
-              label="Total monitoreados"
-              value={formatNumber(riesgo.totalMonitoreados)}
-              sub="Créditos en el último corte"
-              Icon={Users}
-              iconBg="bg-blue-50"
-              iconColor="text-blue-500"
-              valueColor="text-slate-900"
-            />
-            <BottomStat
-              label="% Alto riesgo"
-              value={formatPorcentaje(riesgo.altoRiesgo.porcentaje)}
-              sub={`${riesgo.altoRiesgo.tendencia} vs corte anterior`}
-              Icon={TrendingUp}
-              iconBg="bg-red-50"
-              iconColor="text-red-500"
-              valueColor={riesgo.altoRiesgo.tendencia.startsWith('+') ? 'text-red-500' : 'text-emerald-500'}
-            />
-            <BottomStat
-              label="% Bajo riesgo"
-              value={formatPorcentaje(riesgo.bajoRiesgo.porcentaje)}
-              sub={`${riesgo.bajoRiesgo.tendencia} vs corte anterior`}
-              Icon={ShieldCheck}
-              iconBg="bg-emerald-50"
-              iconColor="text-emerald-500"
-              valueColor="text-emerald-500"
-            />
-          </div>
+          {riesgo && (
+            <div className="grid grid-cols-3 gap-4 mb-5">
+              <BottomStat
+                label="Total monitoreados"
+                value={formatNumber(riesgo.totalMonitoreados ?? 0)}
+                sub="Créditos en el último corte"
+                Icon={Users}
+                iconBg="bg-blue-50"
+                iconColor="text-blue-500"
+                valueColor="text-slate-900"
+              />
+              <BottomStat
+                label="% Alto riesgo"
+                value={formatPorcentaje(riesgo.altoRiesgo?.porcentaje ?? 0)}
+                sub={`${riesgo.altoRiesgo?.tendencia ?? '+0%'} vs corte anterior`}
+                Icon={TrendingUp}
+                iconBg="bg-red-50"
+                iconColor="text-red-500"
+                valueColor={(riesgo.altoRiesgo?.tendencia ?? '').startsWith('+') ? 'text-red-500' : 'text-emerald-500'}
+              />
+              <BottomStat
+                label="% Bajo riesgo"
+                value={formatPorcentaje(riesgo.bajoRiesgo?.porcentaje ?? 0)}
+                sub={`${riesgo.bajoRiesgo?.tendencia ?? '+0%'} vs corte anterior`}
+                Icon={ShieldCheck}
+                iconBg="bg-emerald-50"
+                iconColor="text-emerald-500"
+                valueColor="text-emerald-500"
+              />
+            </div>
+          )}
 
           <button className="w-full flex items-center justify-center gap-2 border border-[#006875] text-[#006875] rounded-2xl py-3 text-sm font-bold hover:bg-[#006875] hover:text-white transition-all">
             Ver estudiantes críticos <ChevronRight size={15} />
@@ -295,9 +313,11 @@ export function Dashboard() {
                 Insight ✨
               </div>
               <p className="text-white text-[13px] leading-relaxed mb-6 font-medium">
-                {riesgo.altoRiesgo.tendencia.startsWith('+')
-                  ? `El alto riesgo subió ${riesgo.altoRiesgo.tendencia} respecto al corte anterior: ${formatNumber(riesgo.altoRiesgo.cantidad)} créditos requieren atención prioritaria.`
-                  : `El alto riesgo bajó ${riesgo.altoRiesgo.tendencia}: ${formatNumber(riesgo.altoRiesgo.cantidad)} créditos siguen requiriendo seguimiento.`}
+                {riesgo
+                  ? ((riesgo.altoRiesgo?.tendencia ?? '').startsWith('+')
+                      ? `El alto riesgo subió ${riesgo.altoRiesgo?.tendencia ?? '+0%'} respecto al corte anterior: ${formatNumber(riesgo.altoRiesgo?.cantidad ?? 0)} créditos requieren atención prioritaria.`
+                      : `El alto riesgo bajó ${riesgo.altoRiesgo?.tendencia ?? '+0%'}: ${formatNumber(riesgo.altoRiesgo?.cantidad ?? 0)} créditos siguen requiriendo seguimiento.`)
+                  : 'Aún no hay datos de riesgo disponibles para generar un insight.'}
               </p>
               <button className="bg-[#00e5ff]/20 text-[#00e5ff] border border-[#00e5ff]/30 px-4 py-2 rounded-xl text-[11px] font-bold hover:bg-[#00e5ff] hover:text-navy-dark transition-all">
                 Ver recomendación
@@ -361,26 +381,31 @@ function StatCard({ title, value, trend, icon: Icon, color, isBadTrend, areaData
 }
 
 function RiesgoBody({ riesgo }: { riesgo: RiesgoDesercion }) {
+  const alto  = riesgo?.altoRiesgo  ?? { cantidad: 0, porcentaje: 0, tendencia: '+0%' };
+  const medio = riesgo?.medioRiesgo ?? { cantidad: 0, porcentaje: 0, tendencia: '+0%' };
+  const bajo  = riesgo?.bajoRiesgo  ?? { cantidad: 0, porcentaje: 0, tendencia: '+0%' };
+  const totalMonitoreados = riesgo?.totalMonitoreados ?? 0;
+
   const riskChartData = [
-    { name: 'Alto',  value: riesgo.altoRiesgo.cantidad,  color: '#a78bfa' },
-    { name: 'Medio', value: riesgo.medioRiesgo.cantidad, color: '#818cf8' },
-    { name: 'Bajo',  value: riesgo.bajoRiesgo.cantidad,  color: '#34d399' },
+    { name: 'Alto',  value: alto.cantidad,  color: '#a78bfa' },
+    { name: 'Medio', value: medio.cantidad, color: '#818cf8' },
+    { name: 'Bajo',  value: bajo.cantidad,  color: '#34d399' },
   ];
 
   const niveles = [
     {
       label: 'Alto riesgo',  desc: 'Mora > 120 días (calificación E)',
-      nivel: riesgo.altoRiesgo, Icon: AlertTriangle,
+      nivel: alto, Icon: AlertTriangle,
       iconBg: 'bg-violet-50', iconColor: 'text-violet-500',
     },
     {
       label: 'Riesgo medio', desc: 'Mora 31-120 días (C, D)',
-      nivel: riesgo.medioRiesgo, Icon: Users,
+      nivel: medio, Icon: Users,
       iconBg: 'bg-blue-50', iconColor: 'text-blue-500',
     },
     {
       label: 'Riesgo bajo',  desc: 'Al día o mora ≤ 30 días (A, B)',
-      nivel: riesgo.bajoRiesgo, Icon: ShieldCheck,
+      nivel: bajo, Icon: ShieldCheck,
       iconBg: 'bg-emerald-50', iconColor: 'text-emerald-500',
     },
   ];
@@ -400,14 +425,15 @@ function RiesgoBody({ riesgo }: { riesgo: RiesgoDesercion }) {
         </ResponsiveContainer>
         <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none">
           <Users size={18} className="text-slate-400 mb-1" />
-          <span className="text-2xl font-bold text-slate-900 leading-none">{formatNumber(riesgo.totalMonitoreados)}</span>
+          <span className="text-2xl font-bold text-slate-900 leading-none">{formatNumber(totalMonitoreados)}</span>
           <span className="text-[8px] font-bold uppercase tracking-widest text-slate-400 mt-0.5 leading-tight">Créditos<br/>monitoreados</span>
         </div>
       </div>
 
       <div className="flex-1 flex flex-col gap-4">
         {niveles.map((r) => {
-          const isUp = r.nivel.tendencia.startsWith('+');
+          const tendencia = r.nivel?.tendencia ?? '+0%';
+          const isUp = tendencia.startsWith('+');
           const TrendIcon = isUp ? TrendingUp : TrendingDown;
           const trendColor = isUp ? 'text-red-500' : 'text-emerald-500';
           return (
@@ -421,11 +447,11 @@ function RiesgoBody({ riesgo }: { riesgo: RiesgoDesercion }) {
               </div>
               <div className="text-right shrink-0">
                 <p className="text-sm font-bold text-slate-900">
-                  {formatNumber(r.nivel.cantidad)}{' '}
-                  <span className="text-slate-400 font-semibold text-xs">({formatPorcentaje(r.nivel.porcentaje)})</span>
+                  {formatNumber(r.nivel?.cantidad ?? 0)}{' '}
+                  <span className="text-slate-400 font-semibold text-xs">({formatPorcentaje(r.nivel?.porcentaje ?? 0)})</span>
                 </p>
                 <div className={`flex items-center justify-end gap-0.5 text-[10px] font-bold ${trendColor}`}>
-                  <TrendIcon size={10} /> {r.nivel.tendencia}
+                  <TrendIcon size={10} /> {tendencia}
                   <span className="text-slate-400 font-normal ml-0.5">vs corte ant.</span>
                 </div>
               </div>
