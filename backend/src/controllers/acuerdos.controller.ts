@@ -3,18 +3,36 @@ import { query } from '../db';
 import { badRequest, notFound } from '../utils/httpError';
 import { assertUuid, parsePagination, pickAllowed } from '../utils/validate';
 
+// Un "acuerdo" es un contacto cuyo resultado es promesa de pago. La fuente
+// principal es `cartera.mcp_contactos` (incluye mensaje enviado y respuesta);
+// `cartera.mcp_gestiones` se conserva como registro simplificado/legado.
 const PROMESA = 'promesa_pago';
+
+const parseId = (raw: string | undefined): number => {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw badRequest('id inválido');
+  }
+  return n;
+};
 
 export const listAcuerdos = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { page, limit, offset } = parsePagination(req.query as Record<string, unknown>);
     const canal = typeof req.query.canal === 'string' ? req.query.canal : null;
+    const estrategiaId = req.query.estrategia_id !== undefined
+      ? Number(req.query.estrategia_id)
+      : null;
 
-    const where: string[] = [`g.resultado = $1`];
+    const where: string[] = [`c.resultado = $1`];
     const params: unknown[] = [PROMESA];
     if (canal) {
       params.push(canal);
-      where.push(`g.canal = $${params.length}`);
+      where.push(`c.canal = $${params.length}`);
+    }
+    if (estrategiaId !== null && Number.isInteger(estrategiaId) && estrategiaId > 0) {
+      params.push(estrategiaId);
+      where.push(`c.estrategia_id = $${params.length}`);
     }
 
     params.push(limit);
@@ -22,25 +40,28 @@ export const listAcuerdos = async (req: Request, res: Response, next: NextFuncti
 
     const sql = `
       SELECT
-        g.id,
-        g.id_credito,
-        g.canal,
-        g.resultado,
-        g.valor_promesa,
-        g.fecha_promesa,
-        g.notas,
-        g.created_at,
+        c.id,
+        c.id_credito,
+        c.estrategia_id,
+        c.canal,
+        c.resultado,
+        c.mensaje_enviado,
+        c.respuesta,
+        c.valor_promesa,
+        c.fecha_promesa,
+        c.notas,
+        c.created_at,
         cr.numero_credito,
         cl.id_cliente,
         cl.primer_nombre,
         cl.primer_apellido,
         cl.numero_documento,
         COUNT(*) OVER() AS total_count
-      FROM cartera.mcp_gestiones g
-      JOIN cartera.creditos cr ON cr.id_credito = g.id_credito
+      FROM cartera.mcp_contactos c
+      JOIN cartera.creditos cr ON cr.id_credito = c.id_credito
       JOIN cartera.clientes cl ON cl.id_cliente = cr.id_cliente
       WHERE ${where.join(' AND ')}
-      ORDER BY g.fecha_promesa ASC NULLS LAST, g.created_at DESC
+      ORDER BY c.fecha_promesa ASC NULLS LAST, c.created_at DESC
       LIMIT $${params.length - 1} OFFSET $${params.length}
     `;
 
@@ -65,21 +86,18 @@ export const listAcuerdos = async (req: Request, res: Response, next: NextFuncti
 
 export const getAcuerdo = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const idNum = Number(req.params.id);
-    if (!Number.isInteger(idNum) || idNum <= 0) {
-      throw badRequest('id inválido');
-    }
+    const id = parseId(req.params.id);
 
     const { rows } = await query(
-      `SELECT g.*,
+      `SELECT c.*,
               cr.numero_credito, cr.tipo_credito,
               cl.id_cliente, cl.primer_nombre, cl.primer_apellido,
               cl.numero_documento, cl.telefono_celular, cl.email
-         FROM cartera.mcp_gestiones g
-         JOIN cartera.creditos cr ON cr.id_credito = g.id_credito
+         FROM cartera.mcp_contactos c
+         JOIN cartera.creditos cr ON cr.id_credito = c.id_credito
          JOIN cartera.clientes cl ON cl.id_cliente = cr.id_cliente
-        WHERE g.id = $1`,
-      [idNum],
+        WHERE c.id = $1`,
+      [id],
     );
 
     if (rows.length === 0) throw notFound('Acuerdo no encontrado');
@@ -93,14 +111,16 @@ export const createAcuerdo = async (req: Request, res: Response, next: NextFunct
   try {
     const body = req.body ?? {};
     const id_credito = assertUuid(body.id_credito, 'id_credito');
+
     const valor_promesa = Number(body.valor_promesa);
     if (!Number.isFinite(valor_promesa) || valor_promesa <= 0) {
       throw badRequest('valor_promesa debe ser un número mayor a 0');
     }
-    const fecha_promesa = body.fecha_promesa;
-    if (typeof fecha_promesa !== 'string') {
+
+    if (typeof body.fecha_promesa !== 'string') {
       throw badRequest('fecha_promesa es requerida (YYYY-MM-DD)');
     }
+    const fecha_promesa = body.fecha_promesa;
     const promiseDate = new Date(fecha_promesa);
     if (Number.isNaN(promiseDate.getTime())) {
       throw badRequest('fecha_promesa inválida');
@@ -110,14 +130,34 @@ export const createAcuerdo = async (req: Request, res: Response, next: NextFunct
     if (promiseDate < today) {
       throw badRequest('fecha_promesa debe ser una fecha futura');
     }
+
     const canal = typeof body.canal === 'string' ? body.canal : 'manual';
     const notas = typeof body.notas === 'string' ? body.notas : null;
+    const mensaje_enviado = typeof body.mensaje_enviado === 'string' ? body.mensaje_enviado : null;
+    const estrategia_id =
+      body.estrategia_id !== undefined && body.estrategia_id !== null
+        ? Number(body.estrategia_id)
+        : null;
+    if (estrategia_id !== null && (!Number.isInteger(estrategia_id) || estrategia_id <= 0)) {
+      throw badRequest('estrategia_id debe ser un entero positivo');
+    }
 
     const { rows } = await query(
-      `INSERT INTO cartera.mcp_gestiones (id_credito, canal, resultado, valor_promesa, fecha_promesa, notas)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO cartera.mcp_contactos
+         (id_credito, estrategia_id, canal, resultado, mensaje_enviado,
+          valor_promesa, fecha_promesa, notas)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [id_credito, canal, PROMESA, valor_promesa, fecha_promesa, notas],
+      [
+        id_credito,
+        estrategia_id,
+        canal,
+        PROMESA,
+        mensaje_enviado,
+        valor_promesa,
+        fecha_promesa,
+        notas,
+      ],
     );
 
     res.status(201).json({ success: true, data: rows[0] });
@@ -126,14 +166,11 @@ export const createAcuerdo = async (req: Request, res: Response, next: NextFunct
   }
 };
 
-const UPDATABLE = ['notas', 'fecha_promesa', 'valor_promesa', 'canal'] as const;
+const UPDATABLE = ['notas', 'fecha_promesa', 'valor_promesa', 'respuesta'] as const;
 
 export const updateAcuerdo = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const idNum = Number(req.params.id);
-    if (!Number.isInteger(idNum) || idNum <= 0) {
-      throw badRequest('id inválido');
-    }
+    const id = parseId(req.params.id);
     const updates = pickAllowed(req.body ?? {}, UPDATABLE);
     const keys = Object.keys(updates);
     if (keys.length === 0) throw badRequest('No hay campos válidos para actualizar');
@@ -152,10 +189,10 @@ export const updateAcuerdo = async (req: Request, res: Response, next: NextFunct
       params.push((updates as Record<string, unknown>)[k]);
       setClauses.push(`${k} = $${i + 1}`);
     });
-    params.push(idNum);
+    params.push(id);
 
     const sql = `
-      UPDATE cartera.mcp_gestiones
+      UPDATE cartera.mcp_contactos
          SET ${setClauses.join(', ')}
        WHERE id = $${params.length}
        RETURNING *
@@ -171,13 +208,10 @@ export const updateAcuerdo = async (req: Request, res: Response, next: NextFunct
 
 export const deleteAcuerdo = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const idNum = Number(req.params.id);
-    if (!Number.isInteger(idNum) || idNum <= 0) {
-      throw badRequest('id inválido');
-    }
+    const id = parseId(req.params.id);
     const { rowCount } = await query(
-      `DELETE FROM cartera.mcp_gestiones WHERE id = $1`,
-      [idNum],
+      `DELETE FROM cartera.mcp_contactos WHERE id = $1`,
+      [id],
     );
     if (!rowCount) throw notFound('Acuerdo no encontrado');
     res.json({ success: true, data: { message: 'Acuerdo eliminado' } });
