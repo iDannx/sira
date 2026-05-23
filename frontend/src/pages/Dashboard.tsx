@@ -282,7 +282,7 @@ export function Dashboard() {
               <BottomStat
                 label="% Alto riesgo"
                 value={formatPorcentaje(riesgo.altoRiesgo?.porcentaje ?? 0)}
-                sub={`${riesgo.altoRiesgo?.tendencia ?? '+0%'} vs corte anterior`}
+                sub={`${riesgo.altoRiesgo?.tendencia ?? '+0%'} vs corte anteriorr`}
                 Icon={TrendingUp}
                 iconBg="bg-red-50"
                 iconColor="text-red-500"
