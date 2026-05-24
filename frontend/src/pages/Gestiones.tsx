@@ -1,23 +1,33 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { clsx } from 'clsx';
 import {
   Search, Filter, Phone, Mail, MessageSquare, Plus, X, Eye, Calendar,
   CheckCircle2, AlertCircle, Clock, ShieldAlert, Gavel, ChevronLeft, ChevronRight,
-  TrendingUp, Users, Sparkles, Bot, User as UserIcon, Send, FileText, DollarSign,
+  TrendingUp, Users, Sparkles, Bot, User as UserIcon, Send, DollarSign,
+  Loader2, RefreshCw,
 } from 'lucide-react';
 import {
-  gestionesMock,
-  type Gestion,
-  type CanalGestion,
-  type ResultadoGestion,
-  type Calificacion,
-  type EstadoJuridico,
-  type OrigenGestion,
+  getResumenGestiones,
+  listGestiones,
+  listPromesas,
+  listJuridica,
+  getGestion,
+  crearGestion,
+  type ResumenGestiones,
+  type ListGestionesParams,
+  type EstadoPromesa,
+} from '../services/gestiones';
+import { getApiErrorMessage } from '../services/api';
+import type {
+  Gestion,
+  CanalGestion,
+  ResultadoGestion,
+  Calificacion,
+  EstadoJuridico,
+  OrigenGestion,
 } from '../data/gestionesMock';
 
 // ── Helpers ──────────────────────────────────────────────
-const HOY = new Date('2026-05-24');
-
 const formatCOP = (v: number) =>
   new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(v);
 
@@ -36,14 +46,21 @@ const formatFecha = (iso: string | null) => {
 };
 
 const diasHastaFecha = (iso: string) => {
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
   const d = new Date(iso);
-  return Math.round((d.getTime() - HOY.getTime()) / (1000 * 60 * 60 * 24));
+  d.setHours(0, 0, 0, 0);
+  return Math.round((d.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
 };
 
-const CANAL_BADGE: Record<CanalGestion, { bg: string; text: string; Icon: typeof MessageSquare }> = {
-  WhatsApp: { bg: 'bg-emerald-50', text: 'text-emerald-600', Icon: MessageSquare },
-  Llamada:  { bg: 'bg-blue-50',    text: 'text-blue-600',    Icon: Phone },
-  Email:    { bg: 'bg-indigo-50',  text: 'text-indigo-600',  Icon: Mail },
+const formatGestionId = (id: number) => `G-${String(id).padStart(4, '0')}`;
+
+// ── Badges ───────────────────────────────────────────────
+const CANAL_META: Record<CanalGestion, { bg: string; text: string; Icon: typeof MessageSquare; label: string }> = {
+  whatsapp: { bg: 'bg-emerald-50', text: 'text-emerald-600', Icon: MessageSquare, label: 'WhatsApp' },
+  llamada:  { bg: 'bg-blue-50',    text: 'text-blue-600',    Icon: Phone,         label: 'Llamada' },
+  email:    { bg: 'bg-indigo-50',  text: 'text-indigo-600',  Icon: Mail,          label: 'Email' },
+  sms:      { bg: 'bg-cyan-50',    text: 'text-cyan-600',    Icon: MessageSquare, label: 'SMS' },
 };
 
 const RESULTADO_BADGE: Record<ResultadoGestion, { bg: string; text: string; label: string }> = {
@@ -77,106 +94,101 @@ const JUR_ALERTA: Partial<Record<EstadoJuridico, { borderColor: string; bgRow: s
 };
 
 type TabKey = 'todas' | 'promesas' | 'juridica';
-type SubPromesas = 'proximas' | 'vencidas' | 'cumplidas';
-type FiltroFecha = 'todos' | '7d' | '30d' | '90d';
-
 const PAGE_SIZE = 8;
 
 // ── Componente principal ─────────────────────────────────
 export function Gestiones() {
   const [activeTab, setActiveTab] = useState<TabKey>('todas');
-  const [subPromesas, setSubPromesas] = useState<SubPromesas>('proximas');
+  const [subPromesas, setSubPromesas] = useState<EstadoPromesa>('proximas');
 
+  // Filtros del Tab 1
   const [search, setSearch] = useState('');
+  const [searchDebounced, setSearchDebounced] = useState('');
   const [canalFiltro, setCanalFiltro] = useState<'todos' | CanalGestion>('todos');
   const [resultadoFiltro, setResultadoFiltro] = useState<'todos' | ResultadoGestion>('todos');
   const [califFiltro, setCalifFiltro] = useState<'todos' | Calificacion>('todos');
   const [jurFiltro, setJurFiltro] = useState<'todos' | EstadoJuridico>('todos');
-  const [fechaFiltro, setFechaFiltro] = useState<FiltroFecha>('todos');
+  const [fechaFiltro, setFechaFiltro] = useState<'todos' | 'hoy' | 'semana' | 'mes'>('todos');
   const [page, setPage] = useState(1);
 
-  const [selected, setSelected] = useState<Gestion | null>(null);
+  const [resumen, setResumen] = useState<ResumenGestiones | null>(null);
+  const [items, setItems] = useState<Gestion[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [promesas, setPromesas] = useState<Gestion[]>([]);
+  const [promesasLoading, setPromesasLoading] = useState(false);
+  const [juridica, setJuridica] = useState<Gestion[]>([]);
+  const [juridicaLoading, setJuridicaLoading] = useState(false);
+
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [showNueva, setShowNueva] = useState(false);
 
-  // ── KPIs ──────────────────────────────────────────────
-  const kpis = useMemo(() => {
-    const promesas = gestionesMock.filter((g) => g.resultado === 'promesa_pago');
-    const promesasActivas = promesas.filter(
-      (g) => g.fechaPromesa && diasHastaFecha(g.fechaPromesa) >= 0 && g.cumplida !== true,
-    );
-    const montoComprometido = promesasActivas.reduce(
-      (acc, g) => acc + (g.valorPrometido ?? 0),
-      0,
-    );
-    const contactosEfectivos = gestionesMock.filter(
-      (g) => g.resultado === 'promesa_pago' || g.resultado === 'enviado',
-    ).length;
-    const tasaContacto = gestionesMock.length === 0
-      ? 0
-      : (contactosEfectivos / gestionesMock.length) * 100;
-    const proximasSemana = promesas.filter(
-      (g) => g.fechaPromesa && diasHastaFecha(g.fechaPromesa) >= 0 && diasHastaFecha(g.fechaPromesa) <= 7,
-    ).length;
-    return {
-      totalGestiones: gestionesMock.length,
-      promesasActivas: promesasActivas.length,
-      montoComprometido,
-      tasaContacto,
-      proximasSemana,
-    };
-  }, []);
+  // Debounce búsqueda
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
-  // ── Listado tab 1 ─────────────────────────────────────
-  const filtradas = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return gestionesMock.filter((g) => {
-      if (q) {
-        const m = [g.clienteNombre, g.clienteId, g.numeroCredito]
-          .some((s) => s.toLowerCase().includes(q));
-        if (!m) return false;
-      }
-      if (canalFiltro     !== 'todos' && g.canal          !== canalFiltro)     return false;
-      if (resultadoFiltro !== 'todos' && g.resultado      !== resultadoFiltro) return false;
-      if (califFiltro     !== 'todos' && g.calificacion   !== califFiltro)     return false;
-      if (jurFiltro       !== 'todos' && g.estadoJuridico !== jurFiltro)       return false;
-      if (fechaFiltro !== 'todos') {
-        const dias = Math.abs(diasHastaFecha(g.fecha));
-        const limites: Record<Exclude<FiltroFecha, 'todos'>, number> = { '7d': 7, '30d': 30, '90d': 90 };
-        if (dias > limites[fechaFiltro]) return false;
-      }
-      return true;
-    });
-  }, [search, canalFiltro, resultadoFiltro, califFiltro, jurFiltro, fechaFiltro]);
+  // Params del listado Tab 1
+  const params = useMemo<ListGestionesParams>(() => ({
+    page,
+    limit: PAGE_SIZE,
+    search: searchDebounced || undefined,
+    canal: canalFiltro === 'todos' ? undefined : canalFiltro,
+    resultado: resultadoFiltro === 'todos' ? undefined : resultadoFiltro,
+    calificacion: califFiltro === 'todos' ? undefined : califFiltro,
+    estadoJuridico: jurFiltro === 'todos' ? undefined : jurFiltro,
+    rangoFecha: fechaFiltro === 'todos' ? undefined : fechaFiltro,
+  }), [page, searchDebounced, canalFiltro, resultadoFiltro, califFiltro, jurFiltro, fechaFiltro]);
 
-  const totalPages = Math.max(1, Math.ceil(filtradas.length / PAGE_SIZE));
+  // Carga resumen + listado Tab 1
+  const loadTodas = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [r, listed] = await Promise.all([
+        getResumenGestiones(),
+        listGestiones(params),
+      ]);
+      setResumen(r);
+      setItems(listed.items);
+      setTotalItems(listed.meta.total);
+    } catch (err) {
+      setError(getApiErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadTodas();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
+
+  // Carga promesas cuando cambian subtab o activamos tab promesas
+  useEffect(() => {
+    if (activeTab !== 'promesas') return;
+    setPromesasLoading(true);
+    listPromesas(subPromesas)
+      .then(setPromesas)
+      .catch((err) => setError(getApiErrorMessage(err)))
+      .finally(() => setPromesasLoading(false));
+  }, [activeTab, subPromesas]);
+
+  // Carga jurídica cuando activamos tab jurídica
+  useEffect(() => {
+    if (activeTab !== 'juridica') return;
+    setJuridicaLoading(true);
+    listJuridica()
+      .then(setJuridica)
+      .catch((err) => setError(getApiErrorMessage(err)))
+      .finally(() => setJuridicaLoading(false));
+  }, [activeTab]);
+
+  const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
-  const paginadas = filtradas.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
-
-  // ── Tab 2 - Promesas ──────────────────────────────────
-  const promesasPorEstado = useMemo(() => {
-    const todas = gestionesMock.filter((g) => g.resultado === 'promesa_pago' && g.fechaPromesa);
-    return {
-      proximas: todas.filter((g) =>
-        g.cumplida === null &&
-        diasHastaFecha(g.fechaPromesa!) >= 0 &&
-        diasHastaFecha(g.fechaPromesa!) <= 7,
-      ),
-      vencidas: todas.filter((g) =>
-        g.cumplida === false ||
-        (g.cumplida === null && diasHastaFecha(g.fechaPromesa!) < 0),
-      ),
-      cumplidas: todas.filter((g) => g.cumplida === true),
-      activas: todas.filter((g) =>
-        g.cumplida === null && diasHastaFecha(g.fechaPromesa!) >= 0,
-      ),
-    };
-  }, []);
-
-  // ── Tab 3 - Cartera jurídica ──────────────────────────
-  const juridicas = useMemo(
-    () => gestionesMock.filter((g) => g.estadoJuridico !== 'SIN_PROCESO'),
-    [],
-  );
 
   const handleLimpiar = () => {
     setSearch(''); setCanalFiltro('todos'); setResultadoFiltro('todos');
@@ -204,41 +216,16 @@ export function Gestiones() {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KpiCard
-          title="Gestiones ejecutadas"
-          value={String(kpis.totalGestiones)}
-          sub="período total"
-          Icon={Sparkles}
-          color="indigo"
-        />
-        <KpiCard
-          title="Promesas activas"
-          value={String(kpis.promesasActivas)}
-          sub={`${formatCOPCompact(kpis.montoComprometido)} comprometidos`}
-          Icon={CheckCircle2}
-          color="emerald"
-        />
-        <KpiCard
-          title="Tasa de contacto"
-          value={`${kpis.tasaContacto.toFixed(1)}%`}
-          sub="contactos efectivos"
-          Icon={TrendingUp}
-          color="blue"
-        />
-        <KpiCard
-          title="Vencen esta semana"
-          value={String(kpis.proximasSemana)}
-          sub="promesas próximas"
-          Icon={Clock}
-          color="purple"
-          isBadTrend
-        />
+        <KpiCard title="Gestiones ejecutadas" value={String(resumen?.totalGestiones ?? 0)}      sub="período total"        Icon={Sparkles}     color="indigo" />
+        <KpiCard title="Promesas activas"     value={String(resumen?.promesasActivas ?? 0)}     sub={`${formatCOPCompact(resumen?.montoComprometido ?? 0)} comprometidos`} Icon={CheckCircle2} color="emerald" />
+        <KpiCard title="Tasa de contacto"     value={`${(resumen?.tasaContacto ?? 0).toFixed(1)}%`} sub="contactos efectivos"  Icon={TrendingUp}   color="blue" />
+        <KpiCard title="Vencen esta semana"   value={String(resumen?.promesasProximasSemana ?? 0)} sub="promesas próximas"     Icon={Clock}        color="purple" />
       </div>
 
       <div className="flex gap-2 p-1 bg-slate-100 rounded-xl w-fit">
         <Tab active={activeTab === 'todas'}    onClick={() => setActiveTab('todas')}    Icon={MessageSquare} label="Todas las gestiones" />
-        <Tab active={activeTab === 'promesas'} onClick={() => setActiveTab('promesas')} Icon={CheckCircle2}  label={`Promesas de pago (${promesasPorEstado.activas.length})`} />
-        <Tab active={activeTab === 'juridica'} onClick={() => setActiveTab('juridica')} Icon={Gavel}         label={`Cartera jurídica (${juridicas.length})`} />
+        <Tab active={activeTab === 'promesas'} onClick={() => setActiveTab('promesas')} Icon={CheckCircle2}  label="Promesas de pago" />
+        <Tab active={activeTab === 'juridica'} onClick={() => setActiveTab('juridica')} Icon={Gavel}         label="Cartera jurídica" />
       </div>
 
       {activeTab === 'todas' && (
@@ -250,16 +237,21 @@ export function Gestiones() {
                 type="text"
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-                placeholder="Buscar cliente, ID o número de crédito..."
+                placeholder="Buscar cliente o número de crédito..."
                 className="w-full bg-white border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/20"
               />
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <FilterSelect label="Canal"     value={canalFiltro}     onChange={(v) => { setCanalFiltro(v as typeof canalFiltro); setPage(1); }}     options={[{value:'todos',label:'Todos'},{value:'WhatsApp',label:'WhatsApp'},{value:'Llamada',label:'Llamada'},{value:'Email',label:'Email'}]} />
-              <FilterSelect label="Resultado" value={resultadoFiltro} onChange={(v) => { setResultadoFiltro(v as typeof resultadoFiltro); setPage(1); }} options={[{value:'todos',label:'Todos'},{value:'enviado',label:'Enviado'},{value:'promesa_pago',label:'Promesa'},{value:'no_contesta',label:'No contesta'},{value:'rechazado',label:'Rechazado'}]} />
-              <FilterSelect label="Calif."    value={califFiltro}     onChange={(v) => { setCalifFiltro(v as typeof califFiltro); setPage(1); }}     options={[{value:'todos',label:'Todos'},...(['A','B','C','D','E'] as Calificacion[]).map(k => ({value:k,label:k}))]} />
-              <FilterSelect label="Jurídico"  value={jurFiltro}       onChange={(v) => { setJurFiltro(v as typeof jurFiltro); setPage(1); }}       options={[{value:'todos',label:'Todos'},...(Object.entries(JUR_BADGE).map(([k,v]) => ({value:k,label:v.label})))]} />
-              <FilterSelect label="Fecha"     value={fechaFiltro}     onChange={(v) => { setFechaFiltro(v as FiltroFecha); setPage(1); }}            options={[{value:'todos',label:'Todos'},{value:'7d',label:'Últ. 7 días'},{value:'30d',label:'Últ. 30 días'},{value:'90d',label:'Últ. 90 días'}]} />
+              <FilterSelect label="Canal"     value={canalFiltro}     onChange={(v) => { setCanalFiltro(v as typeof canalFiltro); setPage(1); }}
+                options={[{value:'todos',label:'Todos'},{value:'whatsapp',label:'WhatsApp'},{value:'llamada',label:'Llamada'},{value:'email',label:'Email'},{value:'sms',label:'SMS'}]} />
+              <FilterSelect label="Resultado" value={resultadoFiltro} onChange={(v) => { setResultadoFiltro(v as typeof resultadoFiltro); setPage(1); }}
+                options={[{value:'todos',label:'Todos'},{value:'enviado',label:'Enviado'},{value:'promesa_pago',label:'Promesa'},{value:'no_contesta',label:'No contesta'},{value:'rechazado',label:'Rechazado'}]} />
+              <FilterSelect label="Calif."    value={califFiltro}     onChange={(v) => { setCalifFiltro(v as typeof califFiltro); setPage(1); }}
+                options={[{value:'todos',label:'Todos'},...(['A','B','C','D','E'] as Calificacion[]).map(k => ({value:k,label:k}))]} />
+              <FilterSelect label="Jurídico"  value={jurFiltro}       onChange={(v) => { setJurFiltro(v as typeof jurFiltro); setPage(1); }}
+                options={[{value:'todos',label:'Todos'},...(Object.entries(JUR_BADGE).map(([k,v]) => ({value:k,label:v.label})))]} />
+              <FilterSelect label="Fecha"     value={fechaFiltro}     onChange={(v) => { setFechaFiltro(v as typeof fechaFiltro); setPage(1); }}
+                options={[{value:'todos',label:'Todos'},{value:'hoy',label:'Hoy'},{value:'semana',label:'Últ. 7 días'},{value:'mes',label:'Últ. 30 días'}]} />
               <button onClick={handleLimpiar} className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-navy-dark border border-slate-200 bg-white rounded-xl px-3 py-2 hover:border-slate-300 transition-colors">
                 <Filter size={14} /> Limpiar
               </button>
@@ -282,24 +274,42 @@ export function Gestiones() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50 bg-white">
-                {paginadas.length === 0 ? (
+                {loading ? (
+                  <tr><td colSpan={9} className="text-center py-16">
+                    <div className="inline-flex flex-col items-center gap-2 text-slate-400">
+                      <Loader2 size={24} className="animate-spin" />
+                      <p className="text-xs font-medium">Cargando gestiones...</p>
+                    </div>
+                  </td></tr>
+                ) : error ? (
+                  <tr><td colSpan={9} className="text-center py-16">
+                    <div className="inline-flex flex-col items-center gap-3 text-center">
+                      <AlertCircle size={24} className="text-red-500" />
+                      <p className="text-xs font-bold text-navy-dark">No se pudieron cargar las gestiones</p>
+                      <p className="text-[11px] text-slate-500">{error}</p>
+                      <button onClick={() => void loadTodas()} className="btn-primary flex items-center gap-2 text-xs">
+                        <RefreshCw size={12} /> Reintentar
+                      </button>
+                    </div>
+                  </td></tr>
+                ) : items.length === 0 ? (
                   <tr><td colSpan={9} className="text-center py-16 text-slate-400 text-sm font-medium">
                     No hay gestiones que coincidan con los filtros.
                   </td></tr>
                 ) : (
-                  paginadas.map((g) => {
-                    const cb = CANAL_BADGE[g.canal];
+                  items.map((g) => {
+                    const cb = CANAL_META[g.canal];
                     const rb = RESULTADO_BADGE[g.resultado];
                     const jb = JUR_BADGE[g.estadoJuridico];
                     return (
                       <tr key={g.id} className="hover:bg-slate-50/60 transition-colors">
                         <td className="px-5 py-3">
-                          <p className="text-xs font-bold text-navy-dark">{g.clienteNombre}</p>
-                          <p className="text-[10px] text-slate-400 font-medium">{g.numeroCredito} · {g.clienteId}</p>
+                          <p className="text-xs font-bold text-navy-dark">{g.nombre}</p>
+                          <p className="text-[10px] text-slate-400 font-medium">{formatGestionId(g.id)} · {g.numeroCredito}</p>
                         </td>
                         <td className="px-5 py-3">
                           <span className={clsx('inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-bold', cb.bg, cb.text)}>
-                            <cb.Icon size={10} /> {g.canal}
+                            <cb.Icon size={10} /> {cb.label}
                           </span>
                         </td>
                         <td className="px-5 py-3">
@@ -331,7 +341,7 @@ export function Gestiones() {
                           {formatFecha(g.fecha)}
                         </td>
                         <td className="px-5 py-3 text-right">
-                          <button onClick={() => setSelected(g)} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#006875] hover:bg-[#006875]/10 px-3 py-1.5 rounded-lg transition-colors">
+                          <button onClick={() => setSelectedId(g.id)} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#006875] hover:bg-[#006875]/10 px-3 py-1.5 rounded-lg transition-colors">
                             <Eye size={13} /> Ver
                           </button>
                         </td>
@@ -345,14 +355,14 @@ export function Gestiones() {
 
           <div className="flex items-center justify-between text-xs font-medium text-slate-500">
             <p>
-              Mostrando <span className="font-bold text-navy-dark">{paginadas.length}</span> de{' '}
-              <span className="font-bold text-navy-dark">{filtradas.length}</span> gestiones
+              Mostrando <span className="font-bold text-navy-dark">{items.length}</span> de{' '}
+              <span className="font-bold text-navy-dark">{totalItems}</span> gestiones
             </p>
             <div className="flex items-center gap-1">
               <PagerBtn disabled={safePage === 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
                 <ChevronLeft size={14} />
               </PagerBtn>
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+              {Array.from({ length: Math.min(totalPages, 10) }, (_, i) => i + 1).map((n) => (
                 <button key={n} onClick={() => setPage(n)} className={clsx('w-8 h-8 rounded-lg text-xs font-bold transition-colors',
                   n === safePage ? 'bg-[#006875] text-white' : 'text-slate-500 hover:bg-slate-100')}>
                   {n}
@@ -369,28 +379,43 @@ export function Gestiones() {
       {activeTab === 'promesas' && (
         <div className="space-y-4">
           <div className="flex gap-2 p-1 bg-slate-100 rounded-xl w-fit">
-            <SubTab active={subPromesas === 'proximas'}  onClick={() => setSubPromesas('proximas')}  label={`Próximas a vencer (${promesasPorEstado.proximas.length})`} />
-            <SubTab active={subPromesas === 'vencidas'}  onClick={() => setSubPromesas('vencidas')}  label={`Vencidas sin pago (${promesasPorEstado.vencidas.length})`} />
-            <SubTab active={subPromesas === 'cumplidas'} onClick={() => setSubPromesas('cumplidas')} label={`Cumplidas (${promesasPorEstado.cumplidas.length})`} />
+            <SubTab active={subPromesas === 'proximas'}  onClick={() => setSubPromesas('proximas')}  label="Próximas a vencer" />
+            <SubTab active={subPromesas === 'vencidas'}  onClick={() => setSubPromesas('vencidas')}  label="Vencidas sin pago" />
+            <SubTab active={subPromesas === 'cumplidas'} onClick={() => setSubPromesas('cumplidas')} label="Cumplidas" />
           </div>
-          <PromesasTable
-            gestiones={promesasPorEstado[subPromesas]}
-            tipo={subPromesas}
-            onVer={setSelected}
-          />
+          {promesasLoading ? (
+            <div className="glass-card rounded-3xl py-16 flex items-center justify-center">
+              <Loader2 size={24} className="animate-spin text-slate-400" />
+            </div>
+          ) : (
+            <PromesasTable
+              gestiones={promesas}
+              tipo={subPromesas}
+              onVer={(g) => setSelectedId(g.id)}
+            />
+          )}
         </div>
       )}
 
       {activeTab === 'juridica' && (
-        <JuridicaTable gestiones={juridicas} onVer={setSelected} />
+        juridicaLoading ? (
+          <div className="glass-card rounded-3xl py-16 flex items-center justify-center">
+            <Loader2 size={24} className="animate-spin text-slate-400" />
+          </div>
+        ) : (
+          <JuridicaTable gestiones={juridica} onVer={(g) => setSelectedId(g.id)} />
+        )
       )}
 
-      {selected && (
-        <GestionDrawer gestion={selected} onClose={() => setSelected(null)} />
+      {selectedId !== null && (
+        <GestionDrawer id={selectedId} onClose={() => setSelectedId(null)} />
       )}
 
       {showNueva && (
-        <NuevaGestionModal onClose={() => setShowNueva(false)} />
+        <NuevaGestionModal
+          onClose={() => setShowNueva(false)}
+          onCreated={() => { setShowNueva(false); void loadTodas(); }}
+        />
       )}
     </div>
   );
@@ -401,7 +426,6 @@ interface KpiCardProps {
   title: string; value: string; sub: string;
   Icon: typeof Sparkles;
   color: 'blue' | 'indigo' | 'purple' | 'emerald';
-  isBadTrend?: boolean;
 }
 function KpiCard({ title, value, sub, Icon, color }: KpiCardProps) {
   const map: Record<string, { icon: string; value: string }> = {
@@ -483,7 +507,7 @@ function OrigenBadge({ origen }: { origen: OrigenGestion }) {
 function PromesasTable({
   gestiones, tipo, onVer,
 }: {
-  gestiones: Gestion[]; tipo: SubPromesas; onVer: (g: Gestion) => void;
+  gestiones: Gestion[]; tipo: EstadoPromesa; onVer: (g: Gestion) => void;
 }) {
   if (gestiones.length === 0) {
     return (
@@ -510,7 +534,7 @@ function PromesasTable({
             {gestiones.map((g) => (
               <tr key={g.id} className="hover:bg-slate-50/60 transition-colors">
                 <td className="px-5 py-3">
-                  <p className="text-xs font-bold text-navy-dark">{g.clienteNombre}</p>
+                  <p className="text-xs font-bold text-navy-dark">{g.nombre}</p>
                   <p className="text-[10px] text-slate-400 font-medium">{g.numeroCredito}</p>
                 </td>
                 <td className="px-5 py-3 text-right text-xs font-bold text-emerald-600">
@@ -530,11 +554,11 @@ function PromesasTable({
                   )}
                 </td>
                 <td className="px-5 py-3">
-                  {g.cumplida === true ? (
+                  {tipo === 'cumplidas' ? (
                     <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600">
                       <CheckCircle2 size={11} /> Pagado
                     </span>
-                  ) : g.cumplida === false ? (
+                  ) : tipo === 'vencidas' ? (
                     <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-600">
                       <AlertCircle size={11} /> No pagado
                     </span>
@@ -545,7 +569,7 @@ function PromesasTable({
                   )}
                 </td>
                 <td className="px-5 py-3 text-right text-xs font-bold text-navy-dark">
-                  {formatCOP(g.saldoTotal)}
+                  {g.saldoTotal ? formatCOP(g.saldoTotal) : '—'}
                 </td>
                 <td className="px-5 py-3 text-right">
                   <button onClick={() => onVer(g)} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#006875] hover:bg-[#006875]/10 px-3 py-1.5 rounded-lg transition-colors">
@@ -595,7 +619,7 @@ function JuridicaTable({ gestiones, onVer }: {
             >
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-1">
-                  <p className="text-sm font-bold text-navy-dark">{g.clienteNombre}</p>
+                  <p className="text-sm font-bold text-navy-dark">{g.nombre}</p>
                   <span className={clsx('px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest', jb.bg, jb.text)}>
                     {jb.label}
                   </span>
@@ -604,7 +628,7 @@ function JuridicaTable({ gestiones, onVer }: {
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-500 font-medium">
-                  {g.numeroCredito} · {g.diasMora}d mora · saldo {formatCOP(g.saldoTotal)}
+                  {g.numeroCredito} · {g.diasMora}d mora · saldo {formatCOP(g.saldoTotal ?? 0)}
                 </p>
               </div>
               <div className="flex items-center gap-3">
@@ -625,17 +649,19 @@ function JuridicaTable({ gestiones, onVer }: {
 }
 
 // ── Drawer ───────────────────────────────────────────────
-function GestionDrawer({ gestion, onClose }: { gestion: Gestion; onClose: () => void }) {
-  const cb = CANAL_BADGE[gestion.canal];
-  const rb = RESULTADO_BADGE[gestion.resultado];
-  const jb = JUR_BADGE[gestion.estadoJuridico];
+function GestionDrawer({ id, onClose }: { id: number; onClose: () => void }) {
+  const [gestion, setGestion] = useState<Gestion | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const historial = useMemo(
-    () => gestionesMock
-      .filter((g) => g.numeroCredito === gestion.numeroCredito && g.id !== gestion.id)
-      .sort((a, b) => b.fecha.localeCompare(a.fecha)),
-    [gestion.numeroCredito, gestion.id],
-  );
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    getGestion(id)
+      .then(setGestion)
+      .catch((err) => setError(getApiErrorMessage(err)))
+      .finally(() => setLoading(false));
+  }, [id]);
 
   return (
     <div
@@ -646,14 +672,17 @@ function GestionDrawer({ gestion, onClose }: { gestion: Gestion; onClose: () => 
         <header className="sticky top-0 z-10 bg-white border-b border-slate-100 p-6 flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#00b4d8] to-[#00e5ff] text-navy-dark font-bold flex items-center justify-center shrink-0 text-sm">
-              {initials(gestion.clienteNombre)}
+              {gestion ? initials(gestion.nombre) : '?'}
             </div>
             <div>
-              <h3 className="text-lg font-bold text-navy-dark leading-tight">{gestion.clienteNombre}</h3>
-              <p className="text-xs text-slate-400 font-medium">{gestion.id} · {gestion.numeroCredito}</p>
-              <span className={clsx('inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest', rb.bg, rb.text)}>
-                {rb.label}
-              </span>
+              <h3 className="text-lg font-bold text-navy-dark leading-tight">{gestion?.nombre ?? 'Cargando...'}</h3>
+              <p className="text-xs text-slate-400 font-medium">{formatGestionId(id)}{gestion ? ` · ${gestion.numeroCredito}` : ''}</p>
+              {gestion && (
+                <span className={clsx('inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest',
+                  RESULTADO_BADGE[gestion.resultado].bg, RESULTADO_BADGE[gestion.resultado].text)}>
+                  {RESULTADO_BADGE[gestion.resultado].label}
+                </span>
+              )}
             </div>
           </div>
           <button onClick={onClose} aria-label="Cerrar" className="text-slate-400 hover:text-navy-dark p-2 rounded-lg hover:bg-slate-100 transition-colors">
@@ -661,146 +690,199 @@ function GestionDrawer({ gestion, onClose }: { gestion: Gestion; onClose: () => 
           </button>
         </header>
 
-        <div className="p-6 space-y-6">
-          <Section title="Información del cliente">
-            <InfoRow Icon={Phone} label="Teléfono" value={gestion.clienteTelefono} />
-            <InfoRow Icon={Mail}  label="Correo"   value={gestion.clienteEmail} />
-            <InfoRow Icon={DollarSign} label="Ingresos mensuales" value={gestion.ingresosMensuales > 0 ? formatCOP(gestion.ingresosMensuales) : 'No reportados'} />
-          </Section>
-
-          <Section title="Estado de la cartera">
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <Stat label="Calificación" value={gestion.calificacion} valueClass="text-navy-dark" />
-              <Stat label="Días mora"    value={gestion.diasMora === 0 ? 'Sin mora' : `${gestion.diasMora}d`}
-                    valueClass={gestion.diasMora === 0 ? 'text-emerald-600' : gestion.diasMora <= 30 ? 'text-amber-600' : gestion.diasMora <= 90 ? 'text-orange-600' : 'text-red-600'} />
-              <Stat label="Saldo total"  value={formatCOP(gestion.saldoTotal)} valueClass="text-navy-dark" />
-              <div className="rounded-2xl border border-slate-100 px-4 py-3">
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Estado jurídico</p>
-                <span className={clsx('inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest', jb.bg, jb.text)}>
-                  {jb.label}
-                </span>
-              </div>
-            </div>
-            {gestion.abogadoAsignado && (
-              <InfoRow Icon={Gavel} label="Abogado asignado" value={gestion.abogadoAsignado} />
-            )}
-          </Section>
-
-          <Section title="Detalle de la gestión">
-            <div className="rounded-2xl border border-slate-100 p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Canal</span>
-                <span className={clsx('inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-bold', cb.bg, cb.text)}>
-                  <cb.Icon size={10} /> {gestion.canal}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Resultado</span>
-                <span className={clsx('inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest', rb.bg, rb.text)}>
-                  {rb.label}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Origen</span>
-                <OrigenBadge origen={gestion.origen} />
-              </div>
-              {gestion.estrategiaAsociada && (
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Estrategia</span>
-                  <span className="text-[11px] font-bold text-indigo-600">{gestion.estrategiaAsociada}</span>
-                </div>
-              )}
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Fecha</span>
-                <span className="text-[11px] font-bold text-navy-dark">{formatFecha(gestion.fecha)}</span>
-              </div>
-            </div>
-
-            {gestion.resultado === 'promesa_pago' && gestion.valorPrometido && (
-              <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center text-emerald-600 shrink-0">
-                  <CheckCircle2 size={16} />
-                </div>
-                <div className="flex-1">
-                  <p className="text-[10px] text-emerald-700 font-bold uppercase tracking-widest leading-none">Promesa de pago</p>
-                  <p className="text-xs font-bold text-navy-dark">{formatCOP(gestion.valorPrometido)} · {formatFecha(gestion.fechaPromesa)}</p>
-                </div>
-              </div>
-            )}
-
-            {gestion.notas && (
-              <div className="mt-3 rounded-2xl bg-slate-50/70 border border-slate-100 p-4">
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Notas</p>
-                <p className="text-xs text-slate-600 font-medium leading-relaxed">{gestion.notas}</p>
-              </div>
-            )}
-          </Section>
-
-          <Section title={`Historial del crédito (${historial.length})`}>
-            {historial.length === 0 ? (
-              <p className="text-xs text-slate-400 font-medium italic">Sin gestiones anteriores en este crédito.</p>
-            ) : (
-              <ul className="space-y-3">
-                {historial.map((h) => {
-                  const hcb = CANAL_BADGE[h.canal];
-                  const hrb = RESULTADO_BADGE[h.resultado];
-                  return (
-                    <li key={h.id} className="rounded-2xl border border-slate-100 p-3">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
-                          <Calendar size={11} /> {formatFecha(h.fecha)}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <span className={clsx('inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold', hcb.bg, hcb.text)}>
-                            <hcb.Icon size={9} /> {h.canal}
-                          </span>
-                          <span className={clsx('px-1.5 py-0.5 rounded-md text-[9px] font-bold', hrb.bg, hrb.text)}>
-                            {hrb.label}
-                          </span>
-                        </div>
-                      </div>
-                      <p className="text-[11px] text-slate-600 leading-relaxed">{h.notas}</p>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </Section>
-        </div>
+        {loading ? (
+          <div className="flex-1 flex items-center justify-center text-slate-400">
+            <Loader2 size={28} className="animate-spin" />
+          </div>
+        ) : error || !gestion ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6">
+            <AlertCircle size={28} className="text-red-500" />
+            <p className="text-xs text-slate-500">{error ?? 'No se pudo cargar la gestión.'}</p>
+          </div>
+        ) : (
+          <DrawerBody gestion={gestion} />
+        )}
       </aside>
     </div>
   );
 }
 
+function DrawerBody({ gestion }: { gestion: Gestion }) {
+  const cb = CANAL_META[gestion.canal];
+  const rb = RESULTADO_BADGE[gestion.resultado];
+  const jb = JUR_BADGE[gestion.estadoJuridico];
+  const historial = gestion.historial ?? [];
+
+  return (
+    <div className="p-6 space-y-6">
+      <Section title="Información del cliente">
+        <InfoRow Icon={UserIcon} label="Nombre" value={gestion.nombre} />
+        <InfoRow Icon={DollarSign} label="Ingresos mensuales" value={gestion.ingresosMensuales > 0 ? formatCOP(gestion.ingresosMensuales) : 'No reportados'} />
+      </Section>
+
+      <Section title="Estado de la cartera">
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <Stat label="Calificación" value={gestion.calificacion} valueClass="text-navy-dark" />
+          <Stat label="Días mora"    value={gestion.diasMora === 0 ? 'Sin mora' : `${gestion.diasMora}d`}
+                valueClass={gestion.diasMora === 0 ? 'text-emerald-600' : gestion.diasMora <= 30 ? 'text-amber-600' : gestion.diasMora <= 90 ? 'text-orange-600' : 'text-red-600'} />
+          {typeof gestion.saldoTotal === 'number' && (
+            <Stat label="Saldo total" value={formatCOP(gestion.saldoTotal)} valueClass="text-navy-dark" />
+          )}
+          <div className="rounded-2xl border border-slate-100 px-4 py-3">
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Estado jurídico</p>
+            <span className={clsx('inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest', jb.bg, jb.text)}>
+              {jb.label}
+            </span>
+          </div>
+        </div>
+        {gestion.abogadoAsignado && (
+          <InfoRow Icon={Gavel} label="Abogado asignado" value={gestion.abogadoAsignado} />
+        )}
+      </Section>
+
+      <Section title="Detalle de la gestión">
+        <div className="rounded-2xl border border-slate-100 p-4 space-y-3">
+          <KV label="Canal">
+            <span className={clsx('inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-bold', cb.bg, cb.text)}>
+              <cb.Icon size={10} /> {cb.label}
+            </span>
+          </KV>
+          <KV label="Resultado">
+            <span className={clsx('inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest', rb.bg, rb.text)}>
+              {rb.label}
+            </span>
+          </KV>
+          <KV label="Origen"><OrigenBadge origen={gestion.origen} /></KV>
+          {gestion.estrategiaAsociada && (
+            <KV label="Estrategia">
+              <span className="text-[11px] font-bold text-indigo-600">{gestion.estrategiaAsociada}</span>
+            </KV>
+          )}
+          <KV label="Fecha">
+            <span className="text-[11px] font-bold text-navy-dark">{formatFecha(gestion.fecha)}</span>
+          </KV>
+        </div>
+
+        {gestion.resultado === 'promesa_pago' && gestion.valorPrometido && (
+          <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center text-emerald-600 shrink-0">
+              <CheckCircle2 size={16} />
+            </div>
+            <div className="flex-1">
+              <p className="text-[10px] text-emerald-700 font-bold uppercase tracking-widest leading-none">Promesa de pago</p>
+              <p className="text-xs font-bold text-navy-dark">{formatCOP(gestion.valorPrometido)} · {formatFecha(gestion.fechaPromesa)}</p>
+            </div>
+          </div>
+        )}
+
+        {gestion.notas && (
+          <div className="mt-3 rounded-2xl bg-slate-50/70 border border-slate-100 p-4">
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Notas</p>
+            <p className="text-xs text-slate-600 font-medium leading-relaxed">{gestion.notas}</p>
+          </div>
+        )}
+      </Section>
+
+      <Section title={`Historial del crédito (${historial.length})`}>
+        {historial.length === 0 ? (
+          <p className="text-xs text-slate-400 font-medium italic">Sin gestiones anteriores en este crédito.</p>
+        ) : (
+          <ul className="space-y-3">
+            {historial.map((h) => {
+              const hcb = CANAL_META[h.canal];
+              const hrb = RESULTADO_BADGE[h.resultado];
+              return (
+                <li key={h.id} className="rounded-2xl border border-slate-100 p-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500">
+                      <Calendar size={11} /> {formatFecha(h.fecha)}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={clsx('inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold', hcb.bg, hcb.text)}>
+                        <hcb.Icon size={9} /> {hcb.label}
+                      </span>
+                      <span className={clsx('px-1.5 py-0.5 rounded-md text-[9px] font-bold', hrb.bg, hrb.text)}>
+                        {hrb.label}
+                      </span>
+                    </div>
+                  </div>
+                  {h.notas && <p className="text-[11px] text-slate-600 leading-relaxed">{h.notas}</p>}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Section>
+    </div>
+  );
+}
+
 // ── Modal Nueva Gestión ──────────────────────────────────
-function NuevaGestionModal({ onClose }: { onClose: () => void }) {
+function NuevaGestionModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [busqueda, setBusqueda] = useState('');
-  const [canal, setCanal] = useState<CanalGestion>('WhatsApp');
+  const [canal, setCanal] = useState<CanalGestion>('whatsapp');
   const [resultado, setResultado] = useState<ResultadoGestion>('enviado');
   const [valorPrometido, setValorPrometido] = useState('');
   const [fechaPromesa, setFechaPromesa] = useState('');
   const [notas, setNotas] = useState('');
-
-  const sugerencias = useMemo(() => {
-    const q = busqueda.trim().toLowerCase();
-    if (!q) return [];
-    // De-duplica por número de crédito.
-    const seen = new Set<string>();
-    const lista: Gestion[] = [];
-    for (const g of gestionesMock) {
-      if (seen.has(g.numeroCredito)) continue;
-      if (g.clienteNombre.toLowerCase().includes(q) ||
-          g.clienteId.toLowerCase().includes(q) ||
-          g.numeroCredito.toLowerCase().includes(q)) {
-        seen.add(g.numeroCredito);
-        lista.push(g);
-        if (lista.length >= 5) break;
-      }
-    }
-    return lista;
-  }, [busqueda]);
+  const [sugerencias, setSugerencias] = useState<Gestion[]>([]);
+  const [buscando, setBuscando] = useState(false);
+  const [creando, setCreando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [clienteSel, setClienteSel] = useState<Gestion | null>(null);
+
+  // Búsqueda en backend con debounce
+  useEffect(() => {
+    if (!busqueda.trim() || clienteSel) {
+      setSugerencias([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      setBuscando(true);
+      listGestiones({ search: busqueda.trim(), limit: 5 })
+        .then(({ items }) => {
+          // De-duplica por idCredito.
+          const seen = new Set<string>();
+          const out: Gestion[] = [];
+          for (const g of items) {
+            if (seen.has(g.idCredito)) continue;
+            seen.add(g.idCredito);
+            out.push(g);
+          }
+          setSugerencias(out);
+        })
+        .catch((err) => setError(getApiErrorMessage(err)))
+        .finally(() => setBuscando(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [busqueda, clienteSel]);
+
+  const handleCrear = async () => {
+    if (!clienteSel) return;
+    setCreando(true);
+    setError(null);
+    try {
+      await crearGestion({
+        id_credito: clienteSel.idCredito,
+        canal,
+        resultado,
+        valor_promesa: resultado === 'promesa_pago' ? Number(valorPrometido) : null,
+        fecha_promesa: resultado === 'promesa_pago' ? fechaPromesa : null,
+        notas: notas || null,
+      });
+      onCreated();
+    } catch (err) {
+      setError(getApiErrorMessage(err));
+    } finally {
+      setCreando(false);
+    }
+  };
+
+  const puedeCrear =
+    clienteSel !== null &&
+    (resultado !== 'promesa_pago' ||
+      (Number(valorPrometido) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(fechaPromesa)));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-navy-dark/40 backdrop-blur-sm" onClick={onClose} role="dialog" aria-modal="true">
@@ -821,6 +903,12 @@ function NuevaGestionModal({ onClose }: { onClose: () => void }) {
         </header>
 
         <div className="p-6 space-y-5 overflow-y-auto">
+          {error && (
+            <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 rounded-xl px-3 py-2 text-xs font-medium">
+              <AlertCircle size={14} /> {error}
+            </div>
+          )}
+
           <div>
             <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Cliente / Crédito</label>
             {clienteSel ? (
@@ -828,8 +916,8 @@ function NuevaGestionModal({ onClose }: { onClose: () => void }) {
                 <div className="flex items-center gap-3">
                   <Users size={16} className="text-slate-400" />
                   <div>
-                    <p className="text-xs font-bold text-navy-dark">{clienteSel.clienteNombre}</p>
-                    <p className="text-[10px] text-slate-400 font-medium">{clienteSel.numeroCredito} · {clienteSel.clienteId}</p>
+                    <p className="text-xs font-bold text-navy-dark">{clienteSel.nombre}</p>
+                    <p className="text-[10px] text-slate-400 font-medium">{clienteSel.numeroCredito}</p>
                   </div>
                 </div>
                 <button onClick={() => { setClienteSel(null); setBusqueda(''); }} className="text-slate-400 hover:text-navy-dark">
@@ -841,17 +929,20 @@ function NuevaGestionModal({ onClose }: { onClose: () => void }) {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                 <input
                   type="text" value={busqueda} onChange={(e) => setBusqueda(e.target.value)}
-                  placeholder="Buscar por nombre, ID o número de crédito..."
+                  placeholder="Buscar por nombre o número de crédito..."
                   className="w-full bg-white border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/20"
                 />
+                {buscando && (
+                  <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-slate-400" />
+                )}
                 {sugerencias.length > 0 && (
                   <ul className="mt-2 border border-slate-100 rounded-xl divide-y divide-slate-50 bg-white shadow-md max-h-48 overflow-y-auto">
                     {sugerencias.map((s) => (
-                      <li key={s.numeroCredito}>
+                      <li key={s.idCredito}>
                         <button onClick={() => { setClienteSel(s); setBusqueda(''); }}
                                 className="w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors">
-                          <p className="text-xs font-bold text-navy-dark">{s.clienteNombre}</p>
-                          <p className="text-[10px] text-slate-400 font-medium">{s.numeroCredito} · {s.clienteId}</p>
+                          <p className="text-xs font-bold text-navy-dark">{s.nombre}</p>
+                          <p className="text-[10px] text-slate-400 font-medium">{s.numeroCredito}</p>
                         </button>
                       </li>
                     ))}
@@ -863,7 +954,7 @@ function NuevaGestionModal({ onClose }: { onClose: () => void }) {
 
           <div className="grid grid-cols-2 gap-3">
             <FieldSelect label="Canal" value={canal} onChange={(v) => setCanal(v as CanalGestion)}
-              options={[{value:'WhatsApp',label:'WhatsApp'},{value:'Llamada',label:'Llamada'},{value:'Email',label:'Email'}]} />
+              options={[{value:'whatsapp',label:'WhatsApp'},{value:'llamada',label:'Llamada'},{value:'email',label:'Email'},{value:'sms',label:'SMS'}]} />
             <FieldSelect label="Resultado" value={resultado} onChange={(v) => setResultado(v as ResultadoGestion)}
               options={[{value:'enviado',label:'Enviado'},{value:'promesa_pago',label:'Promesa de pago'},{value:'no_contesta',label:'No contesta'},{value:'rechazado',label:'Rechazado'}]} />
           </div>
@@ -893,14 +984,16 @@ function NuevaGestionModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <footer className="p-6 border-t border-slate-100 flex items-center justify-end gap-3 bg-slate-50/50">
-          <button onClick={onClose} className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-100 transition-colors">
+          <button onClick={onClose} disabled={creando} className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-100 transition-colors disabled:opacity-50">
             Cancelar
           </button>
           <button
-            disabled={!clienteSel}
+            disabled={!puedeCrear || creando}
+            onClick={() => void handleCrear()}
             className="flex items-center gap-2 bg-[#006875] text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow-md hover:bg-[#004f58] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
           >
-            <Send size={14} /> Registrar gestión
+            {creando ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+            {creando ? 'Registrando...' : 'Registrar gestión'}
           </button>
         </footer>
       </div>
@@ -952,6 +1045,15 @@ function Stat({ label, value, valueClass }: { label: string; value: string; valu
     <div className="rounded-2xl border border-slate-100 px-4 py-3">
       <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">{label}</p>
       <p className={clsx('text-base font-extrabold', valueClass)}>{value}</p>
+    </div>
+  );
+}
+
+function KV({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{label}</span>
+      {children}
     </div>
   );
 }
