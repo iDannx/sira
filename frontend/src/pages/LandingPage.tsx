@@ -13,8 +13,7 @@ export function LandingPage() {
           </div>
 
           <div className="flex items-center gap-4">
-            <Link to="/login" className="text-sm font-bold text-slate-700 px-6 py-2">Log In</Link>
-            <Link to="/login" className="btn-primary shadow-xl">Agendar Demo</Link>
+            <Link to="/login" className="btn-primary shadow-xl">Log In</Link>
           </div>
         </div>
       </nav>

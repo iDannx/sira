@@ -19,7 +19,6 @@ import {
 import { getApiErrorMessage } from '../services/api';
 import type {
   ClienteCartera,
-  NivelRiesgo,
   EstadoCartera,
 } from '../data/carteraMock';
 

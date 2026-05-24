@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { clsx } from 'clsx';
 import {
   Megaphone, Wand2, User as UserIcon, ToggleRight, ToggleLeft,
-  Eye, Edit2, MoreHorizontal, X, Loader2, AlertCircle, RefreshCw,
+  Eye, X, Loader2, AlertCircle, RefreshCw,
   Layers, Target, MessageSquare, Phone, Mail,
   Send, Calendar, CheckCircle2, XCircle, Clock, Play, FileText,
   Filter, Search,
@@ -297,22 +297,14 @@ export function Campanas() {
                           </p>
                         )}
                       </td>
-                      <td className="px-5 py-3">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => setSelectedId(c.id)}
-                            title="Ver detalle"
-                            className="p-2 rounded-lg text-slate-400 hover:text-[#006875] hover:bg-[#006875]/10 transition-colors"
-                          >
-                            <Eye size={15} />
-                          </button>
-                          <button title="Editar" className="p-2 rounded-lg text-slate-400 hover:text-navy-dark hover:bg-slate-100 transition-colors">
-                            <Edit2 size={15} />
-                          </button>
-                          <button title="Más opciones" className="p-2 rounded-lg text-slate-400 hover:text-navy-dark hover:bg-slate-100 transition-colors">
-                            <MoreHorizontal size={15} />
-                          </button>
-                        </div>
+                      <td className="px-5 py-3 text-right">
+                        <button
+                          onClick={() => setSelectedId(c.id)}
+                          title="Ver detalle"
+                          className="p-2 rounded-lg text-slate-400 hover:text-[#006875] hover:bg-[#006875]/10 transition-colors"
+                        >
+                          <Eye size={15} />
+                        </button>
                       </td>
                     </tr>
                   );
