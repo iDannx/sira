@@ -282,6 +282,25 @@ export const getRecuperacion = async (req: Request, res: Response, next: NextFun
       diasMoraMin = Math.trunc(parsed);
     }
 
+    // LIMIT/OFFSET solo si ?limit=N es explícito. Sin ese parámetro no se
+    // aplica ningún tope a la query principal — devuelve todos los registros.
+    let sqlLimit: number | null = null;
+    let pageNum = 1;
+    if (req.query.limit !== undefined) {
+      const parsedLimit = Number(req.query.limit);
+      if (!Number.isFinite(parsedLimit) || parsedLimit <= 0) {
+        throw badRequest('limit debe ser un número > 0', 'INVALID_LIMIT');
+      }
+      sqlLimit = Math.trunc(parsedLimit);
+      if (req.query.page !== undefined) {
+        const parsedPage = Number(req.query.page);
+        if (!Number.isFinite(parsedPage) || parsedPage < 1) {
+          throw badRequest('page debe ser un número >= 1', 'INVALID_PAGE');
+        }
+        pageNum = Math.trunc(parsedPage);
+      }
+    }
+
     const where: string[] = [
       'c.fecha_corte = $1',
       "c.calificacion IN ('B','C','D','E')",
@@ -299,6 +318,24 @@ export const getRecuperacion = async (req: Request, res: Response, next: NextFun
     if (diasMoraMin !== null) {
       params.push(diasMoraMin);
       where.push(`c.dias_mora >= $${params.length}`);
+    }
+
+    // El filtro de nivelRiesgo se traduce a condiciones SQL para que la
+    // paginación y los conteos reflejen el grupo correcto. Los literales son
+    // seguros porque nivelFilter sólo puede tomar 3 valores fijos (whitelist).
+    if (nivelFilter === 'Alto') {
+      where.push(`(c.calificacion = 'E' OR c.dias_mora > 120)`);
+    } else if (nivelFilter === 'Medio') {
+      where.push(`(c.calificacion IN ('C','D') AND c.dias_mora <= 120)`);
+    } else if (nivelFilter === 'Bajo') {
+      where.push(`(c.calificacion = 'B' AND c.dias_mora <= 30)`);
+    }
+
+    let limitOffsetClause = '';
+    if (sqlLimit !== null) {
+      params.push(sqlLimit);
+      params.push((pageNum - 1) * sqlLimit);
+      limitOffsetClause = `LIMIT $${params.length - 1} OFFSET $${params.length}`;
     }
 
     const sql = `
@@ -335,6 +372,7 @@ export const getRecuperacion = async (req: Request, res: Response, next: NextFun
       ) mora ON mora.id_credito = cr.id_credito
       WHERE ${where.join(' AND ')}
       ORDER BY c.calificacion, c.dias_mora DESC
+      ${limitOffsetClause}
     `;
 
     const { rows } = await query<RecuperacionRow>(sql, params);
@@ -380,13 +418,23 @@ export const getRecuperacion = async (req: Request, res: Response, next: NextFun
       };
     });
 
-    if (nivelFilter && (NIVELES_RIESGO as readonly string[]).includes(nivelFilter)) {
-      data = data.filter((d) => d.nivelRiesgo === nivelFilter);
-    }
+    // El filtro de nivelRiesgo ya se aplicó en el WHERE de la query — no hace
+    // falta filtrar aquí en JS.
 
-    if (hasPaginationParams(req.query)) {
-      const { data: page, meta } = sliceWithMeta(data, req);
-      res.json({ success: true, data: page, meta });
+    // Si ?limit fue explícito, la query ya vino paginada desde SQL; incluimos
+    // meta con la página actual. Sin ?limit, devolvemos todos los registros
+    // sin meta ni cortes adicionales.
+    if (sqlLimit !== null) {
+      res.json({
+        success: true,
+        data,
+        meta: {
+          total: data.length,
+          page: pageNum,
+          limit: sqlLimit,
+          totalPages: Math.max(1, Math.ceil(data.length / sqlLimit)),
+        },
+      });
       return;
     }
 
