@@ -1,181 +1,45 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef, useEffect } from 'react';
 import {
   Sparkles, Search, Target, ShieldAlert, TrendingUp, ShieldCheck,
-  Users, X, Wand2, BadgeCheck, Clock, AlertTriangle, CreditCard,
-  ChevronRight, Filter,
+  X, Wand2, BadgeCheck, Clock, AlertTriangle, CreditCard,
+  Filter, ChevronDown, Download,
 } from 'lucide-react';
 import { clsx } from 'clsx';
-
-// ── Tipos ────────────────────────────────────────────────
-type NivelAfinidad = 'Alto' | 'Medio' | 'Bajo';
-type NivelRiesgo = 'Bajo' | 'Medio' | 'Alto';
-
-interface ClientePerfilamiento {
-  id: number;
-  nombre: string;
-  perfil: string;
-  productoSugerido: string;
-  afinidad: number; // 0-100
-  nivelAfinidad: NivelAfinidad;
-  estrategia: string;
-}
-
-interface ClienteRecuperacion {
-  id: number;
-  nombre: string;
-  diasMora: number;
-  nivelRiesgo: NivelRiesgo;
-  comportamientoPago: string;
-  montoVencido: number;
-  estrategia: string;
-}
+import {
+  MOCK_PERFILAMIENTO,
+  MOCK_RECUPERACION,
+  type ClientePerfilamiento,
+  type ClienteRecuperacion,
+  type NivelAfinidad,
+  type NivelRiesgo,
+} from '../data/estrategiasMock';
+import { GrupoRiesgo, type ColumnaTabla } from '../components/estrategias/GrupoRiesgo';
+import {
+  exportarPerfilamiento,
+  exportarRecuperacion,
+  exportarTodo,
+} from '../components/estrategias/exportar';
 
 type Seccion = 'perfilamiento' | 'recuperacion';
-
-// ── Datos mock ───────────────────────────────────────────
-const MOCK_PERFILAMIENTO: ClientePerfilamiento[] = [
-  {
-    id: 1,
-    nombre: 'María Camila Rojas',
-    perfil: 'Pagador puntual · 18 meses sin mora',
-    productoSugerido: 'Compra de cartera',
-    afinidad: 92,
-    nivelAfinidad: 'Alto',
-    estrategia:
-      'María Camila ha mantenido pagos puntuales durante 18 meses consecutivos y muestra una capacidad de endeudamiento subutilizada del 35%. Se recomienda ofrecer una compra de cartera que consolide sus créditos externos (tarjeta de crédito Banco X por $4.200.000 y libranza por $6.800.000) bajo una tasa preferencial del 1.4% MV. La oferta debe enviarse por WhatsApp con simulación previa y opción de aceptación en línea. Estimación de ahorro mensual al cliente: $128.000.',
-  },
-  {
-    id: 2,
-    nombre: 'Andrés Felipe Gómez',
-    perfil: 'Alta capacidad de endeudamiento · Score 780',
-    productoSugerido: 'Crédito de libre inversión',
-    afinidad: 88,
-    nivelAfinidad: 'Alto',
-    estrategia:
-      'Andrés presenta un score crediticio de 780, ingresos estables verificados por Open Finance y un nivel de endeudamiento del 22%. Se sugiere ofrecer crédito de libre inversión hasta $25.000.000 a 60 meses, con tasa del 1.65% MV. El canal recomendado es correo electrónico con landing personalizada. Mensaje sugerido: "Has demostrado un manejo financiero excelente — desbloqueamos un cupo preaprobado pensado para tus próximos planes".',
-  },
-  {
-    id: 3,
-    nombre: 'Laura Stefanía Pérez',
-    perfil: 'Cliente recurrente · Bajo endeudamiento',
-    productoSugerido: 'Aumento de cupo',
-    afinidad: 76,
-    nivelAfinidad: 'Medio',
-    estrategia:
-      'Laura tiene 3 productos activos, todos al día, y usa menos del 40% de su cupo actual de tarjeta. Recomendamos aumento de cupo del 50% ($1.500.000 → $2.250.000). Importante: enviar notificación informativa, no oferta de venta agresiva — su perfil responde mejor a comunicaciones suaves y orientadas a beneficio personal.',
-  },
-  {
-    id: 4,
-    nombre: 'Juan Sebastián Morales',
-    perfil: 'Pagador puntual · Nicho juvenil',
-    productoSugerido: 'Crédito educativo',
-    afinidad: 81,
-    nivelAfinidad: 'Alto',
-    estrategia:
-      'Perfil de 22 años, estudiante universitario en último semestre con apoyo familiar. Tiene microcrédito vigente sin mora. Se sugiere ofrecer crédito educativo de hasta $8.000.000 para posgrado o especialización, con periodo de gracia de 12 meses post-graduación. Canal recomendado: WhatsApp Business con material gráfico breve, lenguaje cercano.',
-  },
-  {
-    id: 5,
-    nombre: 'Diana Patricia Vega',
-    perfil: 'Cliente premium · Score 820',
-    productoSugerido: 'Tarjeta de crédito Gold',
-    afinidad: 95,
-    nivelAfinidad: 'Alto',
-    estrategia:
-      'Diana cumple todos los criterios para upgrade a tarjeta Gold: ingresos superiores a $8M mensuales, 5+ años de relación, sin mora histórica. Beneficios sugeridos a comunicar: cashback del 2%, sala VIP en aeropuertos, seguro de viaje. Enviar oferta personalizada por correo + llamada de bienvenida del gestor asignado.',
-  },
-  {
-    id: 6,
-    nombre: 'Carlos Eduardo Niño',
-    perfil: 'Capacidad media · Buen historial',
-    productoSugerido: 'Crédito de vehículo',
-    afinidad: 68,
-    nivelAfinidad: 'Medio',
-    estrategia:
-      'Carlos ha mostrado interés en simuladores de crédito vehicular en los últimos 30 días (3 visitas al simulador web). Score y capacidad lo califican para crédito hasta $45M a 60 meses. Activar campaña de retargeting + llamada del asesor en franja 6-8pm (preferencia detectada por horarios de interacción digital).',
-  },
-];
-
-const MOCK_RECUPERACION: ClienteRecuperacion[] = [
-  {
-    id: 1,
-    nombre: 'Pedro Antonio Salas',
-    diasMora: 15,
-    nivelRiesgo: 'Bajo',
-    comportamientoPago: 'Suele atrasarse 1-2 semanas, paga sin gestión intensiva',
-    montoVencido: 850000,
-    estrategia:
-      'Mora temprana en perfil históricamente recuperable. Acción sugerida: WhatsApp empático automatizado en día 16 ("Hola Pedro, vimos que tu cuota de $850.000 está pendiente — ¿te ayudamos a coordinar el pago?"). NO escalar a llamada todavía. Si no responde en 72h, segundo mensaje con opción de fraccionamiento. Probabilidad de pago sin gestión humana: 78%.',
-  },
-  {
-    id: 2,
-    nombre: 'Sandra Milena Vargas',
-    diasMora: 45,
-    nivelRiesgo: 'Medio',
-    comportamientoPago: 'Mora recurrente pero negocia y cumple acuerdos',
-    montoVencido: 2400000,
-    estrategia:
-      'Sandra responde bien a acuerdos personalizados, no a presión. Estrategia: llamada de la gestora Catalina Ríos (relación previa positiva) entre 10am-12pm. Ofrecer plan de pago en 3 cuotas con primera cuota condonando intereses moratorios. Riesgo de deserción si se aplica presión excesiva: ALTO. Cliente con 4 años de relación, vale la pena conservarlo.',
-  },
-  {
-    id: 3,
-    nombre: 'Ricardo Andrés Lozano',
-    diasMora: 95,
-    nivelRiesgo: 'Alto',
-    comportamientoPago: 'Mora prolongada, evita contacto telefónico',
-    montoVencido: 5800000,
-    estrategia:
-      'Caso crítico cerca del umbral jurídico. Cliente evade llamadas (8 intentos fallidos en últimos 30 días) pero responde correo electrónico. Acción: correo formal del jefe de cartera proponiendo reunión presencial o videollamada para acuerdo de pago. Ofrecer descuento del 40% en intereses moratorios si paga capital en 30 días. Si no hay respuesta en 7 días → traslado a área jurídica.',
-  },
-  {
-    id: 4,
-    nombre: 'Marcela Hernández Ruiz',
-    diasMora: 8,
-    nivelRiesgo: 'Bajo',
-    comportamientoPago: 'Primera mora en 2 años, probable olvido',
-    montoVencido: 320000,
-    estrategia:
-      'Atípico para este perfil. Probable causa: olvido o problema temporal (no patrón de mora). Acción suave: notificación amistosa automática por SMS y WhatsApp recordando vencimiento + link de pago en 1 clic. Evitar tono cobratorio para no dañar relación. Probabilidad de pago en 48h: 92%.',
-  },
-  {
-    id: 5,
-    nombre: 'Jorge Luis Mendoza',
-    diasMora: 62,
-    nivelRiesgo: 'Medio',
-    comportamientoPago: 'Inestable, alterna meses al día con moras de 30-90 días',
-    montoVencido: 3150000,
-    estrategia:
-      'Patrón inestable. Probable problema de flujo de caja (cliente independiente, ingresos variables). Proponer cambio de fecha de cuota al día 15 (post quincena) y plan de fraccionamiento de la mora actual en 4 cuotas pequeñas. Gestión por llamada matutina + seguimiento por WhatsApp.',
-  },
-  {
-    id: 6,
-    nombre: 'Patricia Ortega Suárez',
-    diasMora: 130,
-    nivelRiesgo: 'Alto',
-    comportamientoPago: 'Sin respuesta en últimos 60 días, riesgo de castigo',
-    montoVencido: 7900000,
-    estrategia:
-      'Cuenta en zona pre-castigo. Última oportunidad antes de reporte juridico: oferta de pago único con 60% de descuento sobre intereses moratorios y plan de 6 cuotas para el capital. Carta certificada física al domicilio registrado + correo + intento de contacto vía referencia familiar registrada. Si no hay respuesta en 15 días: castigar y enviar a abogados externos.',
-  },
-];
 
 // ── Helpers ──────────────────────────────────────────────
 const formatCOP = (v: number) =>
   new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(v);
 
-const AFINIDAD_BADGE: Record<NivelAfinidad, { bg: string; text: string }> = {
-  Alto:  { bg: 'bg-emerald-50', text: 'text-emerald-600' },
-  Medio: { bg: 'bg-amber-50',   text: 'text-amber-600' },
-  Bajo:  { bg: 'bg-slate-100',  text: 'text-slate-500' },
+const AFINIDAD_BADGE: Record<NivelAfinidad, { bg: string; text: string; dot: string }> = {
+  Alto:  { bg: 'bg-emerald-50', text: 'text-emerald-600', dot: 'bg-emerald-500' },
+  Medio: { bg: 'bg-amber-50',   text: 'text-amber-600',   dot: 'bg-amber-500' },
+  Bajo:  { bg: 'bg-slate-100',  text: 'text-slate-500',   dot: 'bg-slate-400' },
 };
 
-const RIESGO_STYLE: Record<NivelRiesgo, {
-  badgeBg: string; badgeText: string; barColor: string; iconBg: string; iconColor: string;
-}> = {
-  Bajo:  { badgeBg: 'bg-emerald-50', badgeText: 'text-emerald-600', barColor: 'bg-emerald-400', iconBg: 'bg-emerald-50', iconColor: 'text-emerald-500' },
-  Medio: { badgeBg: 'bg-amber-50',   badgeText: 'text-amber-600',   barColor: 'bg-amber-400',   iconBg: 'bg-amber-50',   iconColor: 'text-amber-500' },
-  Alto:  { badgeBg: 'bg-red-50',     badgeText: 'text-red-600',     barColor: 'bg-red-400',     iconBg: 'bg-red-50',     iconColor: 'text-red-500' },
+const RIESGO_BADGE: Record<NivelRiesgo, { bg: string; text: string; dot: string }> = {
+  Bajo:  { bg: 'bg-emerald-50', text: 'text-emerald-600', dot: 'bg-emerald-500' },
+  Medio: { bg: 'bg-amber-50',   text: 'text-amber-600',   dot: 'bg-amber-500' },
+  Alto:  { bg: 'bg-red-50',     text: 'text-red-600',     dot: 'bg-red-500' },
 };
+
+const NIVELES_AFINIDAD: NivelAfinidad[] = ['Alto', 'Medio', 'Bajo'];
+const NIVELES_RIESGO: NivelRiesgo[] = ['Alto', 'Medio', 'Bajo'];
 
 // ── Componente principal ─────────────────────────────────
 export function Estrategias() {
@@ -208,6 +72,18 @@ export function Estrategias() {
     );
   }, [search]);
 
+  const porNivelPerfilamiento = useMemo(() => {
+    const map: Record<NivelAfinidad, ClientePerfilamiento[]> = { Alto: [], Medio: [], Bajo: [] };
+    for (const c of perfilados) map[c.nivelAfinidad].push(c);
+    return map;
+  }, [perfilados]);
+
+  const porNivelRecuperacion = useMemo(() => {
+    const map: Record<NivelRiesgo, ClienteRecuperacion[]> = { Alto: [], Medio: [], Bajo: [] };
+    for (const c of recuperacion) map[c.nivelRiesgo].push(c);
+    return map;
+  }, [recuperacion]);
+
   const stats = useMemo(() => ({
     perfilamientoAlto: MOCK_PERFILAMIENTO.filter((c) => c.nivelAfinidad === 'Alto').length,
     perfilamientoTotal: MOCK_PERFILAMIENTO.length,
@@ -215,6 +91,119 @@ export function Estrategias() {
     recuperacionTotal: MOCK_RECUPERACION.length,
     montoEnRiesgo: MOCK_RECUPERACION.reduce((acc, c) => acc + c.montoVencido, 0),
   }), []);
+
+  // Columnas para cada sección
+  const columnasPerfilamiento: ColumnaTabla<ClientePerfilamiento>[] = [
+    {
+      key: 'cliente',
+      label: 'Cliente',
+      render: (c) => (
+        <div className="flex items-center gap-3">
+          <Avatar nombre={c.nombre} />
+          <div>
+            <p className="text-xs font-bold text-navy-dark leading-tight">{c.nombre}</p>
+            <p className="text-[10px] text-slate-400 font-medium">P-{String(c.id).padStart(4, '0')}</p>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'perfil',
+      label: 'Comportamiento',
+      render: (c) => (
+        <p className="text-[11px] text-slate-600 font-medium flex items-center gap-1">
+          <BadgeCheck size={12} className="text-emerald-500 shrink-0" />
+          <span className="truncate">{c.perfil}</span>
+        </p>
+      ),
+    },
+    {
+      key: 'producto',
+      label: 'Producto sugerido',
+      render: (c) => <p className="text-xs font-bold text-navy-dark">{c.productoSugerido}</p>,
+    },
+    {
+      key: 'match',
+      label: 'Match',
+      align: 'right',
+      render: (c) => (
+        <div className="inline-flex flex-col items-end">
+          <span className="text-sm font-extrabold text-[#006875]">{c.afinidad}%</span>
+          <div className="w-20 h-1 bg-slate-100 rounded-full overflow-hidden mt-0.5">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-[#00b4d8] to-[#00e5ff]"
+              style={{ width: `${c.afinidad}%` }}
+            />
+          </div>
+        </div>
+      ),
+    },
+  ];
+
+  const columnasRecuperacion: ColumnaTabla<ClienteRecuperacion>[] = [
+    {
+      key: 'cliente',
+      label: 'Cliente',
+      render: (c) => (
+        <div className="flex items-center gap-3">
+          <Avatar nombre={c.nombre} />
+          <div>
+            <p className="text-xs font-bold text-navy-dark leading-tight">{c.nombre}</p>
+            <p className="text-[10px] text-slate-400 font-medium">R-{String(c.id).padStart(4, '0')}</p>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'comportamiento',
+      label: 'Comportamiento',
+      render: (c) => (
+        <p className="text-[11px] text-slate-600 font-medium truncate max-w-[280px]">{c.comportamientoPago}</p>
+      ),
+    },
+    {
+      key: 'mora',
+      label: 'Días mora',
+      align: 'right',
+      render: (c) => (
+        <span className="inline-flex items-center gap-1 text-xs font-bold text-navy-dark">
+          <Clock size={11} className="text-slate-400" /> {c.diasMora}d
+        </span>
+      ),
+    },
+    {
+      key: 'monto',
+      label: 'Monto vencido',
+      align: 'right',
+      render: (c) => <span className="text-xs font-bold text-navy-dark">{formatCOP(c.montoVencido)}</span>,
+    },
+    {
+      key: 'riesgo',
+      label: 'Riesgo',
+      render: (c) => {
+        const b = RIESGO_BADGE[c.nivelRiesgo];
+        const Icon = c.nivelRiesgo === 'Alto' ? AlertTriangle : c.nivelRiesgo === 'Medio' ? TrendingUp : ShieldCheck;
+        return (
+          <span className={clsx('inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest', b.bg, b.text)}>
+            <Icon size={10} /> {c.nivelRiesgo}
+          </span>
+        );
+      },
+    },
+  ];
+
+  const abrirEstrategiaPerfilamiento = (c: ClientePerfilamiento) =>
+    setEstrategiaAbierta({
+      titulo: c.nombre,
+      subtitulo: `Producto sugerido: ${c.productoSugerido}`,
+      texto: c.estrategia,
+    });
+  const abrirEstrategiaRecuperacion = (c: ClienteRecuperacion) =>
+    setEstrategiaAbierta({
+      titulo: c.nombre,
+      subtitulo: `${c.diasMora} días de mora · ${formatCOP(c.montoVencido)} vencidos`,
+      texto: c.estrategia,
+    });
 
   return (
     <div className="space-y-8 pb-12">
@@ -225,13 +214,12 @@ export function Estrategias() {
             <Sparkles className="text-indigo-500 w-5 h-5" />
           </div>
           <p className="text-slate-500 text-sm font-medium">
-            Recomendaciones generadas por IA para ofrecer productos a clientes ideales y diseñar la mejor ruta de recuperación de cartera vencida.
+            Recomendaciones generadas por IA, agrupadas por perfil de riesgo para gestión a gran escala.
           </p>
         </div>
-        <button className="flex items-center gap-2 bg-[#006875] text-white px-6 py-3 rounded-xl font-bold shadow-lg hover:bg-[#004f58] transition-all">
-          <Wand2 size={18} />
-          <span>Generar nuevas</span>
-        </button>
+        <GenerarMenu
+          onExportarTodo={() => exportarTodo(MOCK_PERFILAMIENTO, MOCK_RECUPERACION)}
+        />
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -302,29 +290,45 @@ export function Estrategias() {
         </div>
       </div>
 
-      {seccion === 'perfilamiento' ? (
-        <SeccionPerfilamiento
-          clientes={perfilados}
-          onVerEstrategia={(c) =>
-            setEstrategiaAbierta({
-              titulo: c.nombre,
-              subtitulo: `Producto sugerido: ${c.productoSugerido}`,
-              texto: c.estrategia,
+      <div className="space-y-4">
+        {seccion === 'perfilamiento'
+          ? NIVELES_AFINIDAD.map((nivel) => {
+              const b = AFINIDAD_BADGE[nivel];
+              const clientesNivel = porNivelPerfilamiento[nivel];
+              return (
+                <GrupoRiesgo
+                  key={`perf-${nivel}`}
+                  nivel={nivel}
+                  colorBadge={`${b.bg} ${b.text}`}
+                  colorIndicador={b.dot}
+                  clientes={clientesNivel}
+                  columnas={columnasPerfilamiento}
+                  initiallyExpanded={nivel === 'Alto'}
+                  onVerEstrategia={abrirEstrategiaPerfilamiento}
+                  onExportarGrupo={(list) => exportarPerfilamiento(list, `grupo-${nivel.toLowerCase()}`)}
+                  onExportarSeleccionados={(list) => exportarPerfilamiento(list, `seleccion-${nivel.toLowerCase()}`)}
+                />
+              );
             })
-          }
-        />
-      ) : (
-        <SeccionRecuperacion
-          clientes={recuperacion}
-          onVerEstrategia={(c) =>
-            setEstrategiaAbierta({
-              titulo: c.nombre,
-              subtitulo: `${c.diasMora} días de mora · ${formatCOP(c.montoVencido)} vencidos`,
-              texto: c.estrategia,
-            })
-          }
-        />
-      )}
+          : NIVELES_RIESGO.map((nivel) => {
+              const b = RIESGO_BADGE[nivel];
+              const clientesNivel = porNivelRecuperacion[nivel];
+              return (
+                <GrupoRiesgo
+                  key={`rec-${nivel}`}
+                  nivel={nivel}
+                  colorBadge={`${b.bg} ${b.text}`}
+                  colorIndicador={b.dot}
+                  clientes={clientesNivel}
+                  columnas={columnasRecuperacion}
+                  initiallyExpanded={nivel === 'Alto'}
+                  onVerEstrategia={abrirEstrategiaRecuperacion}
+                  onExportarGrupo={(list) => exportarRecuperacion(list, `grupo-${nivel.toLowerCase()}`)}
+                  onExportarSeleccionados={(list) => exportarRecuperacion(list, `seleccion-${nivel.toLowerCase()}`)}
+                />
+              );
+            })}
+      </div>
 
       {estrategiaAbierta && (
         <EstrategiaModal
@@ -358,145 +362,43 @@ function SectionTab({
   );
 }
 
-function SeccionPerfilamiento({
-  clientes, onVerEstrategia,
-}: {
-  clientes: ClientePerfilamiento[];
-  onVerEstrategia: (c: ClientePerfilamiento) => void;
-}) {
-  if (clientes.length === 0) {
-    return <EmptyState label="No hay clientes que coincidan con la búsqueda." Icon={Users} />;
-  }
+function GenerarMenu({ onExportarTodo }: { onExportarTodo: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [open]);
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-      {clientes.map((c) => {
-        const badge = AFINIDAD_BADGE[c.nivelAfinidad];
-        return (
-          <article key={c.id} className="glass-card rounded-3xl p-6 flex flex-col gap-5 hover:shadow-lg transition-shadow">
-            <header className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#00b4d8] to-[#00e5ff] text-navy-dark font-bold flex items-center justify-center shrink-0 text-xs">
-                  {initials(c.nombre)}
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-navy-dark leading-tight">{c.nombre}</p>
-                  <p className="text-[11px] text-slate-400 font-medium flex items-center gap-1 mt-0.5">
-                    <BadgeCheck size={12} /> {c.perfil}
-                  </p>
-                </div>
-              </div>
-              <span className={clsx('px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest shrink-0', badge.bg, badge.text)}>
-                {c.nivelAfinidad}
-              </span>
-            </header>
-
-            <div className="bg-slate-50/70 rounded-2xl p-4 border border-slate-100">
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Producto sugerido</p>
-              <p className="text-sm font-bold text-navy-dark">{c.productoSugerido}</p>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Match con el producto</p>
-                <p className="text-sm font-extrabold text-[#006875]">{c.afinidad}%</p>
-              </div>
-              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-[#00b4d8] to-[#00e5ff]"
-                  style={{ width: `${c.afinidad}%` }}
-                />
-              </div>
-            </div>
-
-            <button
-              onClick={() => onVerEstrategia(c)}
-              className="w-full flex items-center justify-center gap-2 border border-[#006875] text-[#006875] rounded-2xl py-2.5 text-xs font-bold hover:bg-[#006875] hover:text-white transition-all"
-            >
-              Ver estrategia <ChevronRight size={14} />
-            </button>
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
-function SeccionRecuperacion({
-  clientes, onVerEstrategia,
-}: {
-  clientes: ClienteRecuperacion[];
-  onVerEstrategia: (c: ClienteRecuperacion) => void;
-}) {
-  if (clientes.length === 0) {
-    return <EmptyState label="No hay clientes que coincidan con la búsqueda." Icon={Users} />;
-  }
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-      {clientes.map((c) => {
-        const s = RIESGO_STYLE[c.nivelRiesgo];
-        const RiesgoIcon =
-          c.nivelRiesgo === 'Alto' ? AlertTriangle :
-          c.nivelRiesgo === 'Medio' ? TrendingUp : ShieldCheck;
-        return (
-          <article key={c.id} className="glass-card rounded-3xl p-6 flex flex-col gap-5 hover:shadow-lg transition-shadow">
-            <header className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className={clsx('w-11 h-11 rounded-2xl flex items-center justify-center shrink-0', s.iconBg)}>
-                  <RiesgoIcon size={20} className={s.iconColor} />
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-navy-dark leading-tight">{c.nombre}</p>
-                  <p className="text-[11px] text-slate-400 font-medium flex items-center gap-1 mt-0.5">
-                    <Clock size={12} /> {c.diasMora} días de mora
-                  </p>
-                </div>
-              </div>
-              <span className={clsx('px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest shrink-0', s.badgeBg, s.badgeText)}>
-                Riesgo {c.nivelRiesgo}
-              </span>
-            </header>
-
-            <div className="bg-slate-50/70 rounded-2xl p-4 border border-slate-100">
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Comportamiento de pago</p>
-              <p className="text-xs text-slate-600 font-medium leading-relaxed">{c.comportamientoPago}</p>
-            </div>
-
-            <div className="flex items-end justify-between">
-              <div>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Monto vencido</p>
-                <p className="text-lg font-extrabold text-navy-dark">{formatCOP(c.montoVencido)}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Severidad</p>
-                <div className="flex gap-1">
-                  {[1, 2, 3].map((i) => {
-                    const filled =
-                      (c.nivelRiesgo === 'Bajo' && i === 1) ||
-                      (c.nivelRiesgo === 'Medio' && i <= 2) ||
-                      (c.nivelRiesgo === 'Alto' && i <= 3);
-                    return (
-                      <span
-                        key={i}
-                        className={clsx(
-                          'w-5 h-1.5 rounded-full',
-                          filled ? s.barColor : 'bg-slate-200',
-                        )}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <button
-              onClick={() => onVerEstrategia(c)}
-              className="w-full flex items-center justify-center gap-2 border border-[#006875] text-[#006875] rounded-2xl py-2.5 text-xs font-bold hover:bg-[#006875] hover:text-white transition-all"
-            >
-              Ver estrategia <ChevronRight size={14} />
-            </button>
-          </article>
-        );
-      })}
+    <div ref={ref} className="relative">
+      <div className="flex">
+        <button className="flex items-center gap-2 bg-[#006875] text-white pl-5 pr-4 py-3 rounded-l-xl font-bold shadow-lg hover:bg-[#004f58] transition-all">
+          <Wand2 size={18} /> Generar nuevas
+        </button>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          aria-label="Más opciones"
+          className="bg-[#006875] text-white px-3 py-3 rounded-r-xl shadow-lg border-l border-white/20 hover:bg-[#004f58] transition-all"
+        >
+          <ChevronDown size={16} className={clsx('transition-transform', open && 'rotate-180')} />
+        </button>
+      </div>
+      {open && (
+        <div role="menu" className="absolute right-0 top-full mt-2 w-60 bg-white border border-slate-100 rounded-2xl shadow-xl py-2 z-30">
+          <button
+            onClick={() => { setOpen(false); onExportarTodo(); }}
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            <Download size={14} className="text-[#006875]" /> Exportar todo (.xlsx)
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -579,19 +481,14 @@ function StatBox({
   );
 }
 
-function EmptyState({ label, Icon }: { label: string; Icon: typeof Users }) {
+function Avatar({ nombre }: { nombre: string }) {
+  const parts = nombre.trim().split(/\s+/);
+  const first = parts[0]?.[0] ?? '';
+  const second = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? '' : '';
+  const inits = (first + second).toUpperCase() || '?';
   return (
-    <div className="glass-card rounded-3xl flex flex-col items-center justify-center py-24 gap-3 text-slate-400">
-      <Icon size={32} />
-      <p className="text-sm font-medium">{label}</p>
+    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#00b4d8] to-[#00e5ff] text-navy-dark font-bold flex items-center justify-center shrink-0 text-[10px]">
+      {inits}
     </div>
   );
 }
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  const first = parts[0]?.[0] ?? '';
-  const second = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? '' : '';
-  return (first + second).toUpperCase() || '?';
-}
-
