@@ -22,6 +22,10 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(USER_KEY);
+      // Sesión expirada cuenta como logout: no queremos que el siguiente
+      // usuario herede la conversación con AURA del anterior.
+      localStorage.removeItem('aura_chat_history');
+      localStorage.removeItem('aura_chat_messages');
       if (!window.location.pathname.startsWith('/login')) {
         window.location.href = '/login';
       }

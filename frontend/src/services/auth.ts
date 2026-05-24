@@ -16,6 +16,10 @@ export async function logout(): Promise<void> {
   } finally {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    // Limpiar conversación de AURA: tanto el historial protocolar como los
+    // mensajes visuales viven en localStorage para sobrevivir reloads.
+    localStorage.removeItem('aura_chat_history');
+    localStorage.removeItem('aura_chat_messages');
   }
 }
 
