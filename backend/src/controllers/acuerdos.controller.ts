@@ -104,7 +104,7 @@ export const getResumen = async (_req: Request, res: Response, next: NextFunctio
             AND (p.valor_pagado IS NULL OR p.valor_pagado < mc.valor_promesa)
         )                                                          AS incumplidos,
         COALESCE(SUM(mc.valor_promesa), 0)                         AS monto_comprometido
-      FROM cartera.mcp_contactos mc
+      FROM cartera.mcp_gestiones mc
       LEFT JOIN cartera.pagos p
              ON p.id_credito = mc.id_credito
             AND p.fecha_pago >= mc.created_at::date
@@ -252,7 +252,7 @@ export const listAcuerdos = async (req: Request, res: Response, next: NextFuncti
           COALESCE(SUM(p.valor_pagado) FILTER (
             WHERE p.fecha_pago >= mc.created_at::date
           ), 0)                                                            AS total_pagado
-        FROM cartera.mcp_contactos mc
+        FROM cartera.mcp_gestiones mc
         JOIN cartera.creditos cr ON cr.id_credito = mc.id_credito
         JOIN cartera.clientes cl ON cl.id_cliente = cr.id_cliente
         LEFT JOIN cartera.cuotas cu ON cu.id_credito = mc.id_credito
@@ -367,7 +367,7 @@ const fetchAcuerdoDetalle = async (id: number, gestorNombre: string) => {
        cr.valor_cuota,
        cr.fecha_desembolso      AS fecha_inicio,
        cr.fecha_ultima_cuota    AS fecha_fin
-     FROM cartera.mcp_contactos mc
+     FROM cartera.mcp_gestiones mc
      JOIN cartera.creditos cr ON cr.id_credito = mc.id_credito
      JOIN cartera.clientes cl ON cl.id_cliente = cr.id_cliente
      WHERE mc.id = $1`,
@@ -397,9 +397,14 @@ const fetchAcuerdoDetalle = async (id: number, gestorNombre: string) => {
       [acuerdo.id_credito, createdAtYmd],
     ),
     query<GestionDetalleRow>(
+      // Filtramos los `promesa_pago` para que el propio acuerdo (y otros
+      // acuerdos del mismo crédito) no se muestren a sí mismos como notas.
+      // Antes del rename eso ya funcionaba porque acuerdos y notas vivían
+      // en tablas distintas; ahora comparten cartera.mcp_gestiones.
       `SELECT id, canal AS autor, created_at, notas AS texto
          FROM cartera.mcp_gestiones
         WHERE id_credito = $1
+          AND resultado <> 'promesa_pago'
         ORDER BY created_at DESC`,
       [acuerdo.id_credito],
     ),
@@ -501,7 +506,7 @@ export const registrarPago = async (req: Request, res: Response, next: NextFunct
     }
 
     const { rows: acuerdoRows } = await query<{ id_credito: string }>(
-      `SELECT id_credito FROM cartera.mcp_contactos WHERE id = $1`,
+      `SELECT id_credito FROM cartera.mcp_gestiones WHERE id = $1`,
       [id],
     );
     if (acuerdoRows.length === 0) throw notFound('Acuerdo no encontrado');
@@ -545,7 +550,7 @@ export const marcarIncumplido = async (
         : 'Sin motivo';
 
     const { rows: acuerdoRows } = await client.query(
-      `SELECT id_credito FROM cartera.mcp_contactos WHERE id = $1`,
+      `SELECT id_credito FROM cartera.mcp_gestiones WHERE id = $1`,
       [id],
     );
     if (acuerdoRows.length === 0) throw notFound('Acuerdo no encontrado');
@@ -558,7 +563,7 @@ export const marcarIncumplido = async (
       [idCredito, motivo],
     );
     await client.query(
-      `UPDATE cartera.mcp_contactos
+      `UPDATE cartera.mcp_gestiones
           SET notas = COALESCE(notas, '') || E'\\nIncumplido: ' || $1
         WHERE id = $2`,
       [motivo, id],
@@ -596,7 +601,7 @@ export const createNotaAcuerdo = async (
     if (!texto) throw badRequest('texto es requerido');
 
     const { rows: acuerdoRows } = await query<{ id_credito: string }>(
-      `SELECT id_credito FROM cartera.mcp_contactos WHERE id = $1`,
+      `SELECT id_credito FROM cartera.mcp_gestiones WHERE id = $1`,
       [id],
     );
     if (acuerdoRows.length === 0) throw notFound('Acuerdo no encontrado');
@@ -650,8 +655,18 @@ export const createAcuerdo = async (req: Request, res: Response, next: NextFunct
     const canal = typeof body.canal === 'string' ? body.canal : 'manual';
     const notas = typeof body.notas === 'string' ? body.notas : null;
 
+    // mcp_gestiones.id_credito no tiene FK formal; validamos a mano que el
+    // crédito exista antes de insertar para no crear gestiones huérfanas.
+    const { rows: credito } = await query<{ id_credito: string }>(
+      `SELECT id_credito FROM cartera.creditos WHERE id_credito = $1`,
+      [idCredito],
+    );
+    if (credito.length === 0) {
+      throw badRequest('id_credito no existe en cartera.creditos', 'INVALID_FK');
+    }
+
     const { rows: inserted } = await query<{ id: number }>(
-      `INSERT INTO cartera.mcp_contactos
+      `INSERT INTO cartera.mcp_gestiones
          (id_credito, canal, resultado, valor_promesa, fecha_promesa, notas, created_at)
        VALUES ($1, $2, 'promesa_pago', $3, $4, $5, NOW())
        RETURNING id`,
@@ -662,6 +677,71 @@ export const createAcuerdo = async (req: Request, res: Response, next: NextFunct
     const data = await fetchAcuerdoDetalle(id, req.user?.name ?? 'Sistema');
     if (!data) throw notFound('No se pudo recuperar el acuerdo creado');
     res.status(201).json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// =================================================================
+// PUT /api/acuerdos/:id — actualización parcial
+// =================================================================
+//
+// Whitelist: notas, fecha_promesa, valor_promesa. El campo `respuesta` ya
+// no existe en mcp_gestiones; se removió a propósito.
+
+const UPDATABLE_FIELDS = ['notas', 'fecha_promesa', 'valor_promesa'] as const;
+type UpdatableField = (typeof UPDATABLE_FIELDS)[number];
+
+export const updateAcuerdo = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = parseAcuerdoId(req.params.id);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    const setClauses: string[] = [];
+    const params: unknown[] = [];
+
+    for (const field of UPDATABLE_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(body, field)) continue;
+      const value: unknown = body[field as UpdatableField];
+
+      if (field === 'valor_promesa') {
+        const v = Number(value);
+        if (!Number.isFinite(v) || v <= 0) {
+          throw badRequest('valor_promesa debe ser mayor a 0');
+        }
+        params.push(v);
+      } else if (field === 'fecha_promesa') {
+        if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+          throw badRequest('fecha_promesa debe ser YYYY-MM-DD');
+        }
+        if (Number.isNaN(new Date(value).getTime())) {
+          throw badRequest('fecha_promesa inválida');
+        }
+        params.push(value);
+      } else {
+        // notas: acepta string o null para limpiar.
+        params.push(value === null ? null : String(value ?? ''));
+      }
+
+      setClauses.push(`${field} = $${params.length}`);
+    }
+
+    if (setClauses.length === 0) {
+      throw badRequest('No hay campos válidos para actualizar');
+    }
+
+    params.push(id);
+    const { rowCount } = await query(
+      `UPDATE cartera.mcp_gestiones
+          SET ${setClauses.join(', ')}
+        WHERE id = $${params.length}`,
+      params,
+    );
+    if (!rowCount) throw notFound('Acuerdo no encontrado');
+
+    const data = await fetchAcuerdoDetalle(id, req.user?.name ?? 'Sistema');
+    if (!data) throw notFound('Acuerdo no encontrado');
+    res.json({ success: true, data });
   } catch (err) {
     next(err);
   }

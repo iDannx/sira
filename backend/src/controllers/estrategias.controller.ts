@@ -129,6 +129,10 @@ export const getPerfilamiento = async (req: Request, res: Response, next: NextFu
       );
     }
 
+    // El schema `openfinance` fue eliminado: ya no hay LEFT JOIN a
+    // `of_perfil_financiero`. Devolvemos NULL en las columnas que venían de
+    // ahí para preservar la forma de PerfilamientoRow; el mapeo JS cae al
+    // ramal "sin datos OF" de manera natural.
     const sql = `
       SELECT
         cl.id_cliente,
@@ -141,14 +145,13 @@ export const getPerfilamiento = async (req: Request, res: Response, next: NextFu
         c.calificacion,
         c.dias_mora,
         c.saldo_total,
-        pf.score_comportamiento_pago,
-        pf.capacidad_endeudamiento
+        NULL::numeric AS score_comportamiento_pago,
+        NULL::numeric AS capacidad_endeudamiento
       FROM cartera.cartera c
       JOIN cartera.creditos cr ON cr.id_credito = c.id_credito
       JOIN cartera.clientes cl ON cl.id_cliente = cr.id_cliente
-      LEFT JOIN openfinance.of_perfil_financiero pf ON pf.id_cliente = cl.id_cliente
       WHERE ${where.join(' AND ')}
-      ORDER BY pf.score_comportamiento_pago DESC NULLS LAST
+      ORDER BY c.saldo_total DESC NULLS LAST
       LIMIT 50
     `;
 
@@ -170,10 +173,14 @@ export const getPerfilamiento = async (req: Request, res: Response, next: NextFu
       const nivelAfinidad = toNivelAfinidad(afinidad);
       const perfil = buildPerfilDesc(score, saldoTotal, capacidad, plazoMeses);
 
+      // Sin schema openfinance, `capacidad` suele ser 0. Solo agregamos esa
+      // línea cuando tenemos un valor real para evitar "$0" en el texto.
+      const capacidadLine =
+        capacidad > 0 ? ` Capacidad de endeudamiento estimada: $${formatCOP(capacidad)}.` : '';
       const estrategia =
-        `Cliente con historial de pago ejemplar en producto ${tipoCredito.toLowerCase().replace(/_/g, ' ')}. ` +
-        `Capacidad de endeudamiento estimada: $${formatCOP(capacidad)}. ` +
-        `Se recomienda ofrecer ${producto} con condiciones preferenciales.\n` +
+        `Cliente con historial de pago ejemplar en producto ${tipoCredito.toLowerCase().replace(/_/g, ' ')}.` +
+        capacidadLine +
+        ` Se recomienda ofrecer ${producto} con condiciones preferenciales.\n` +
         `Acción sugerida: contactar por canal preferido y presentar simulación personalizada.`;
 
       return {
