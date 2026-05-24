@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  LayoutDashboard, Wallet, FileText, Settings, Rocket, Bell, Search,
-  HelpCircle, ChevronDown, Wand2, LogOut, UserCircle2, Sparkles,
+  LayoutDashboard, Wallet, FileText, Rocket, Bell, Search,
+  HelpCircle, ChevronDown, Wand2, LogOut, Sparkles,
+  MessageSquare,
 } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -47,12 +48,10 @@ export function Sidebar() {
     { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
     { name: 'Cartera', icon: Wallet, to: '/cartera' },
     { name: 'Acuerdos', icon: FileText, to: '/acuerdos' },
-    { name: 'Gestiones', icon: Rocket, to: '/gestiones' },
+    { name: 'Gestiones', icon: MessageSquare, to: '/gestiones' },
     { name: 'Predicción de riesgo', icon: Rocket, to: '/predictive-risk' },
     { name: 'Estrategias', icon: Sparkles, to: '/estrategias' },
     { name: 'Automatizaciones', icon: Wand2, to: '/automations' },
-    { name: 'Reportes', icon: FileText, to: '/reports' },
-    { name: 'Configuración', icon: Settings, to: '/settings' },
   ];
 
   return (
@@ -172,12 +171,6 @@ export function Header() {
                 <p className="text-xs font-bold text-navy-dark truncate">{user?.name}</p>
                 <p className="text-[10px] text-slate-400 truncate">{user?.email}</p>
               </div>
-              <button
-                onClick={() => { setMenuOpen(false); navigate('/settings'); }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-              >
-                <UserCircle2 size={16} /> Mi perfil
-              </button>
               <button
                 onClick={() => void handleLogout()}
                 disabled={loggingOut}

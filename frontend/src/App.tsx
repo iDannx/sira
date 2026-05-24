@@ -6,6 +6,7 @@ import { Automations } from './pages/Automations';
 import { Cartera } from './pages/Cartera';
 import { Acuerdos } from './pages/Acuerdos';
 import { Estrategias } from './pages/Estrategias';
+import { Gestiones } from './pages/Gestiones';
 import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
 import { NotFound } from './pages/NotFound';
@@ -31,10 +32,8 @@ export default function App() {
 
         <Route path="/cartera" element={<Protected><Cartera /></Protected>} />
         <Route path="/acuerdos" element={<Protected><Acuerdos /></Protected>} />
-        <Route path="/gestiones" element={<Protected><PlaceholderPage title="Gestiones" /></Protected>} />
+        <Route path="/gestiones" element={<Protected><Gestiones /></Protected>} />
         <Route path="/predictive-risk" element={<Protected><PlaceholderPage title="Predicción de Riesgo" /></Protected>} />
-        <Route path="/reports" element={<Protected><PlaceholderPage title="Reportes" /></Protected>} />
-        <Route path="/settings" element={<Protected><PlaceholderPage title="Configuración" /></Protected>} />
 
         <Route path="/404" element={<NotFound />} />
         <Route path="*" element={<Navigate to="/404" replace />} />

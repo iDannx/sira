@@ -401,7 +401,7 @@ export function Estrategias() {
                     colorIndicador={b.dot}
                     clientes={clientesNivel}
                     columnas={columnasPerfilamiento}
-                    initiallyExpanded={nivel === 'Alto'}
+                    initiallyExpanded={false}
                     onVerEstrategia={abrirEstrategiaPerfilamiento}
                     onExportarGrupo={(list) => exportarPerfilamiento(list, `grupo-${nivel.toLowerCase()}`)}
                     onExportarSeleccionados={(list) => exportarPerfilamiento(list, `seleccion-${nivel.toLowerCase()}`)}
@@ -419,7 +419,7 @@ export function Estrategias() {
                     colorIndicador={b.dot}
                     clientes={clientesNivel}
                     columnas={columnasRecuperacion}
-                    initiallyExpanded={nivel === 'Alto'}
+                    initiallyExpanded={false}
                     onVerEstrategia={abrirEstrategiaRecuperacion}
                     onExportarGrupo={(list) => exportarRecuperacion(list, `grupo-${nivel.toLowerCase()}`)}
                     onExportarSeleccionados={(list) => exportarRecuperacion(list, `seleccion-${nivel.toLowerCase()}`)}
