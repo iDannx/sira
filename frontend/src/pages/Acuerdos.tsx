@@ -1,16 +1,27 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { clsx } from 'clsx';
 import {
   Search, Filter, FileText, X, Phone, Mail, Calendar, ChevronLeft, ChevronRight,
   CheckCircle2, AlertCircle, Clock, DollarSign, ArrowUpDown, ArrowUp, ArrowDown,
   Wallet, TrendingUp, TrendingDown, BarChart3, Eye, Plus, XCircle,
-  User as UserIcon,
+  User as UserIcon, Loader2, RefreshCw,
 } from 'lucide-react';
 import {
-  acuerdosMock,
-  type Acuerdo,
-  type EstadoAcuerdo,
-  type EstadoCuota,
+  getResumenAcuerdos,
+  listAcuerdos,
+  getAcuerdo,
+  registrarPagoAcuerdo,
+  marcarAcuerdoIncumplido,
+  crearNotaAcuerdo,
+  type ResumenAcuerdos,
+  type AcuerdoListItem,
+  type ListAcuerdosParams,
+} from '../services/acuerdos';
+import { getApiErrorMessage } from '../services/api';
+import type {
+  Acuerdo,
+  EstadoAcuerdo,
+  EstadoCuota,
 } from '../data/acuerdosMock';
 
 // ── Helpers ──────────────────────────────────────────────
@@ -26,7 +37,8 @@ const formatCOPCompact = (v: number) => {
   return formatCOP(v);
 };
 
-const formatFecha = (iso: string) => {
+const formatFecha = (iso: string | null | undefined) => {
+  if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -46,12 +58,8 @@ const ESTADO_CUOTA_BADGE: Record<EstadoCuota, string> = {
 };
 
 type RangoFecha = 'todos' | 'semana' | 'mes' | 'vencido';
-type SortKey = 'cliente' | 'monto' | 'cuotas' | 'proximoPago' | 'cumplimiento' | 'estado';
+type SortKey = NonNullable<ListAcuerdosParams['sortBy']>;
 type SortDir = 'asc' | 'desc';
-
-const ESTADO_ORDER: Record<EstadoAcuerdo, number> = {
-  Vigente: 0, Vencido: 1, Incumplido: 2, Cumplido: 3,
-};
 
 const PAGE_SIZE = 10;
 
@@ -63,74 +71,52 @@ export function Acuerdos() {
   const [sortKey, setSortKey] = useState<SortKey>('proximoPago');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState<Acuerdo | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const kpis = useMemo(() => {
-    const hoy = new Date('2026-05-23');
-    const esteMes = (iso: string) => {
-      const d = new Date(iso);
-      return d.getFullYear() === hoy.getFullYear() && d.getMonth() === hoy.getMonth();
-    };
-    return {
-      vigentes: acuerdosMock.filter((a) => a.estado === 'Vigente').length,
-      cumplidosMes: acuerdosMock.filter(
-        (a) => a.estado === 'Cumplido' && esteMes(a.fechaFin),
-      ).length,
-      incumplidos: acuerdosMock.filter(
-        (a) => a.estado === 'Incumplido' || a.estado === 'Vencido',
-      ).length,
-      montoComprometido: acuerdosMock
-        .filter((a) => a.estado === 'Vigente' || a.estado === 'Vencido')
-        .reduce((acc, a) => acc + a.montoAcordado, 0),
-    };
-  }, []);
+  const [resumen, setResumen] = useState<ResumenAcuerdos | null>(null);
+  const [items, setItems] = useState<AcuerdoListItem[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const filtrados = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const hoy = new Date('2026-05-23');
-    return acuerdosMock.filter((a) => {
-      if (q && !a.clienteNombre.toLowerCase().includes(q) && !a.id.toLowerCase().includes(q) && !a.clienteId.toLowerCase().includes(q)) return false;
-      if (estadoFiltro !== 'todos' && a.estado !== estadoFiltro) return false;
-      if (fechaFiltro !== 'todos') {
-        if (!a.proximoPago) return false;
-        const fp = new Date(a.proximoPago.fecha);
-        if (fechaFiltro === 'semana') {
-          const en7 = new Date(hoy); en7.setDate(hoy.getDate() + 7);
-          if (!(fp >= hoy && fp <= en7)) return false;
-        } else if (fechaFiltro === 'mes') {
-          if (!(fp.getFullYear() === hoy.getFullYear() && fp.getMonth() === hoy.getMonth())) return false;
-        } else if (fechaFiltro === 'vencido') {
-          if (!(fp < hoy)) return false;
-        }
-      }
-      return true;
-    });
-  }, [search, estadoFiltro, fechaFiltro]);
+  const [searchDebounced, setSearchDebounced] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
-  const ordenados = useMemo(() => {
-    const arr = [...filtrados];
-    arr.sort((a, b) => {
-      const dir = sortDir === 'asc' ? 1 : -1;
-      switch (sortKey) {
-        case 'cliente':       return a.clienteNombre.localeCompare(b.clienteNombre) * dir;
-        case 'monto':         return (a.montoAcordado - b.montoAcordado) * dir;
-        case 'cuotas':        return (a.cuotasPagadas / a.cuotasTotales - b.cuotasPagadas / b.cuotasTotales) * dir;
-        case 'proximoPago': {
-          const av = a.proximoPago ? new Date(a.proximoPago.fecha).getTime() : Infinity;
-          const bv = b.proximoPago ? new Date(b.proximoPago.fecha).getTime() : Infinity;
-          return (av - bv) * dir;
-        }
-        case 'cumplimiento':  return (a.cumplimiento - b.cumplimiento) * dir;
-        case 'estado':        return (ESTADO_ORDER[a.estado] - ESTADO_ORDER[b.estado]) * dir;
-        default: return 0;
-      }
-    });
-    return arr;
-  }, [filtrados, sortKey, sortDir]);
+  const params = useMemo<ListAcuerdosParams>(() => ({
+    page,
+    limit: PAGE_SIZE,
+    search: searchDebounced || undefined,
+    estado: estadoFiltro === 'todos' ? undefined : estadoFiltro,
+    rangoFecha: fechaFiltro === 'todos' ? undefined : fechaFiltro,
+    sortBy: sortKey,
+    sortDir,
+  }), [page, searchDebounced, estadoFiltro, fechaFiltro, sortKey, sortDir]);
 
-  const totalPages = Math.max(1, Math.ceil(ordenados.length / PAGE_SIZE));
-  const safePage = Math.min(page, totalPages);
-  const paginados = ordenados.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [r, listed] = await Promise.all([
+        getResumenAcuerdos(),
+        listAcuerdos(params),
+      ]);
+      setResumen(r);
+      setItems(listed.items);
+      setTotalItems(listed.meta.total);
+    } catch (err) {
+      setError(getApiErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -140,6 +126,9 @@ export function Acuerdos() {
   const handleLimpiar = () => {
     setSearch(''); setEstadoFiltro('todos'); setFechaFiltro('todos'); setPage(1);
   };
+
+  const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
 
   return (
     <div className="space-y-8 pb-12">
@@ -159,10 +148,10 @@ export function Acuerdos() {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KpiCard title="Acuerdos vigentes"        value={String(kpis.vigentes)}                  trend="planes activos"             Icon={Wallet}      color="emerald" />
-        <KpiCard title="Cumplidos este mes"       value={String(kpis.cumplidosMes)}              trend="+12% vs mes anterior"       Icon={CheckCircle2} color="blue"    />
-        <KpiCard title="Incumplidos / vencidos"   value={String(kpis.incumplidos)}               trend="-2 vs mes anterior"         Icon={AlertCircle} color="purple"  isBadTrend />
-        <KpiCard title="Monto comprometido"       value={formatCOPCompact(kpis.montoComprometido)} trend="cartera bajo acuerdo"      Icon={BarChart3}   color="indigo"  />
+        <KpiCard title="Acuerdos vigentes"        value={String(resumen?.vigentes ?? 0)}                   trend="planes activos"        Icon={Wallet}       color="emerald" />
+        <KpiCard title="Cumplidos este mes"       value={String(resumen?.cumplidosMes ?? 0)}               trend="acuerdos pagados"      Icon={CheckCircle2} color="blue"    />
+        <KpiCard title="Incumplidos / vencidos"   value={String(resumen?.incumplidos ?? 0)}                trend="requieren gestión"     Icon={AlertCircle}  color="purple"  isBadTrend />
+        <KpiCard title="Monto comprometido"       value={formatCOPCompact(resumen?.montoComprometido ?? 0)} trend="cartera bajo acuerdo"  Icon={BarChart3}    color="indigo"  />
       </div>
 
       <div className="glass-card rounded-3xl p-6 space-y-5">
@@ -225,14 +214,32 @@ export function Acuerdos() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50 bg-white">
-              {paginados.length === 0 ? (
+              {loading ? (
+                <tr><td colSpan={7} className="text-center py-16">
+                  <div className="inline-flex flex-col items-center gap-2 text-slate-400">
+                    <Loader2 size={24} className="animate-spin" />
+                    <p className="text-xs font-medium">Cargando acuerdos...</p>
+                  </div>
+                </td></tr>
+              ) : error ? (
+                <tr><td colSpan={7} className="text-center py-16">
+                  <div className="inline-flex flex-col items-center gap-3 text-center">
+                    <AlertCircle size={24} className="text-red-500" />
+                    <p className="text-xs font-bold text-navy-dark">No se pudieron cargar los acuerdos</p>
+                    <p className="text-[11px] text-slate-500">{error}</p>
+                    <button onClick={() => void load()} className="btn-primary flex items-center gap-2 text-xs">
+                      <RefreshCw size={12} /> Reintentar
+                    </button>
+                  </div>
+                </td></tr>
+              ) : items.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="text-center py-16 text-slate-400 text-sm font-medium">
                     No hay acuerdos que coincidan con los filtros.
                   </td>
                 </tr>
               ) : (
-                paginados.map((a) => {
+                items.map((a) => {
                   const eb = ESTADO_BADGE[a.estado];
                   return (
                     <tr key={a.id} className="hover:bg-slate-50/60 transition-colors">
@@ -268,7 +275,7 @@ export function Acuerdos() {
                       </td>
                       <td className="px-5 py-4 text-right">
                         <button
-                          onClick={() => setSelected(a)}
+                          onClick={() => setSelectedId(a.id)}
                           className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#006875] hover:bg-[#006875]/10 px-3 py-1.5 rounded-lg transition-colors"
                         >
                           <Eye size={13} /> Ver detalle
@@ -284,14 +291,14 @@ export function Acuerdos() {
 
         <div className="flex items-center justify-between text-xs font-medium text-slate-500">
           <p>
-            Mostrando <span className="font-bold text-navy-dark">{paginados.length}</span> de{' '}
-            <span className="font-bold text-navy-dark">{ordenados.length}</span> acuerdos
+            Mostrando <span className="font-bold text-navy-dark">{items.length}</span> de{' '}
+            <span className="font-bold text-navy-dark">{totalItems}</span> acuerdos
           </p>
           <div className="flex items-center gap-1">
             <PagerBtn disabled={safePage === 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
               <ChevronLeft size={14} />
             </PagerBtn>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+            {Array.from({ length: Math.min(totalPages, 10) }, (_, i) => i + 1).map((n) => (
               <button
                 key={n}
                 onClick={() => setPage(n)}
@@ -310,16 +317,20 @@ export function Acuerdos() {
         </div>
       </div>
 
-      {selected && <AcuerdoDrawer acuerdo={selected} onClose={() => setSelected(null)} />}
+      {selectedId && (
+        <AcuerdoDrawer
+          id={selectedId}
+          onClose={() => setSelectedId(null)}
+          onUpdated={() => void load()}
+        />
+      )}
     </div>
   );
 }
 
 // ── Subcomponentes ───────────────────────────────────────
 interface KpiCardProps {
-  title: string;
-  value: string;
-  trend: string;
+  title: string; value: string; trend: string;
   Icon: typeof Wallet;
   color: 'blue' | 'indigo' | 'purple' | 'emerald';
   isBadTrend?: boolean;
@@ -433,9 +444,76 @@ function ProgressBar({ pct }: { pct: number }) {
 }
 
 // ── Drawer lateral ───────────────────────────────────────
-function AcuerdoDrawer({ acuerdo, onClose }: { acuerdo: Acuerdo; onClose: () => void }) {
+function AcuerdoDrawer({
+  id, onClose, onUpdated,
+}: { id: string; onClose: () => void; onUpdated: () => void }) {
+  const [acuerdo, setAcuerdo] = useState<Acuerdo | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [nuevaNota, setNuevaNota] = useState('');
-  const eb = ESTADO_BADGE[acuerdo.estado];
+  const [busy, setBusy] = useState<'nota' | 'pago' | 'incumplir' | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setAcuerdo(await getAcuerdo(id));
+    } catch (err) {
+      setError(getApiErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void load(); /* eslint-disable-next-line */ }, [id]);
+
+  const handleAgregarNota = async () => {
+    if (!nuevaNota.trim() || !acuerdo) return;
+    setBusy('nota');
+    try {
+      const nota = await crearNotaAcuerdo(acuerdo.id, nuevaNota.trim());
+      setAcuerdo({ ...acuerdo, notas: [nota, ...acuerdo.notas] });
+      setNuevaNota('');
+      onUpdated();
+    } catch (err) {
+      setError(getApiErrorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleRegistrarPago = async () => {
+    if (!acuerdo || !acuerdo.proximoPago) return;
+    setBusy('pago');
+    try {
+      const updated = await registrarPagoAcuerdo(acuerdo.id, {
+        monto: acuerdo.proximoPago.monto,
+        fecha: new Date().toISOString().slice(0, 10),
+      });
+      setAcuerdo(updated);
+      onUpdated();
+    } catch (err) {
+      setError(getApiErrorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleMarcarIncumplido = async () => {
+    if (!acuerdo) return;
+    setBusy('incumplir');
+    try {
+      const updated = await marcarAcuerdoIncumplido(acuerdo.id);
+      setAcuerdo(updated);
+      onUpdated();
+    } catch (err) {
+      setError(getApiErrorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const eb = acuerdo ? ESTADO_BADGE[acuerdo.estado] : null;
 
   return (
     <div
@@ -451,14 +529,20 @@ function AcuerdoDrawer({ acuerdo, onClose }: { acuerdo: Acuerdo; onClose: () => 
         <header className="sticky top-0 z-10 bg-white border-b border-slate-100 p-6 flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#00b4d8] to-[#00e5ff] text-navy-dark font-bold flex items-center justify-center shrink-0 text-sm">
-              {initials(acuerdo.clienteNombre)}
+              {acuerdo ? initials(acuerdo.clienteNombre) : '?'}
             </div>
             <div>
-              <h3 className="text-lg font-bold text-navy-dark leading-tight">{acuerdo.clienteNombre}</h3>
-              <p className="text-xs text-slate-400 font-medium">{acuerdo.id} · {acuerdo.clienteId}</p>
-              <span className={clsx('inline-flex items-center gap-1.5 mt-2 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest', eb.bg, eb.text)}>
-                <eb.Icon size={10} /> {acuerdo.estado}
-              </span>
+              <h3 className="text-lg font-bold text-navy-dark leading-tight">
+                {acuerdo?.clienteNombre ?? 'Cargando...'}
+              </h3>
+              <p className="text-xs text-slate-400 font-medium">
+                {id}{acuerdo ? ` · ${acuerdo.clienteId}` : ''}
+              </p>
+              {acuerdo && eb && (
+                <span className={clsx('inline-flex items-center gap-1.5 mt-2 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest', eb.bg, eb.text)}>
+                  <eb.Icon size={10} /> {acuerdo.estado}
+                </span>
+              )}
             </div>
           </div>
           <button
@@ -470,113 +554,145 @@ function AcuerdoDrawer({ acuerdo, onClose }: { acuerdo: Acuerdo; onClose: () => 
           </button>
         </header>
 
-        <div className="p-6 space-y-6">
-          <Section title="Información del cliente">
-            <InfoRow Icon={Phone}    label="Teléfono"        value={acuerdo.clienteTelefono} />
-            <InfoRow Icon={Mail}     label="Correo"          value={acuerdo.clienteEmail} />
-            <InfoRow Icon={UserIcon} label="Gestor asignado" value={acuerdo.gestor} />
-          </Section>
+        {loading ? (
+          <div className="flex-1 flex items-center justify-center text-slate-400">
+            <Loader2 size={28} className="animate-spin" />
+          </div>
+        ) : error || !acuerdo ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6">
+            <AlertCircle size={28} className="text-red-500" />
+            <p className="text-xs text-slate-500">{error ?? 'No se pudo cargar el acuerdo.'}</p>
+            <button onClick={() => void load()} className="btn-primary text-xs">Reintentar</button>
+          </div>
+        ) : (
+          <>
+            <div className="p-6 space-y-6 flex-1">
+              <Section title="Información del cliente">
+                <InfoRow Icon={Phone}    label="Teléfono"        value={acuerdo.clienteTelefono ?? '—'} />
+                <InfoRow Icon={Mail}     label="Correo"          value={acuerdo.clienteEmail ?? '—'} />
+                <InfoRow Icon={UserIcon} label="Gestor asignado" value={acuerdo.gestor} />
+              </Section>
 
-          <Section title="Deuda y acuerdo">
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <Stat label="Deuda original"   value={formatCOP(acuerdo.deudaOriginal)} valueClass="text-slate-700" />
-              <Stat label="Monto acordado"   value={formatCOP(acuerdo.montoAcordado)} valueClass="text-navy-dark" />
-              <Stat label="Cuotas"           value={`${acuerdo.cuotasPagadas} de ${acuerdo.cuotasTotales}`} valueClass="text-navy-dark" />
-              <Stat label="Valor por cuota"  value={formatCOP(acuerdo.valorCuota)}    valueClass="text-navy-dark" />
-            </div>
-            <div className="rounded-2xl bg-slate-50/70 border border-slate-100 p-4 mb-4">
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Condiciones pactadas</p>
-              <p className="text-xs text-slate-600 font-medium leading-relaxed">{acuerdo.condiciones}</p>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <InfoRow Icon={Calendar} label="Inicio" value={formatFecha(acuerdo.fechaInicio)} />
-              <InfoRow Icon={Calendar} label="Fin"    value={formatFecha(acuerdo.fechaFin)} />
-            </div>
-            {acuerdo.proximoPago && (
-              <div className="mt-4 flex items-center gap-3 rounded-2xl border border-cyan-100 bg-cyan-50/40 px-4 py-3">
-                <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center text-cyan-600 shrink-0">
-                  <Clock size={16} />
+              <Section title="Deuda y acuerdo">
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <Stat label="Deuda original"  value={formatCOP(acuerdo.deudaOriginal)} valueClass="text-slate-700" />
+                  <Stat label="Monto acordado"  value={formatCOP(acuerdo.montoAcordado)} valueClass="text-navy-dark" />
+                  <Stat label="Cuotas"          value={`${acuerdo.cuotasPagadas} de ${acuerdo.cuotasTotales}`} valueClass="text-navy-dark" />
+                  <Stat label="Valor por cuota" value={formatCOP(acuerdo.valorCuota)}    valueClass="text-navy-dark" />
                 </div>
-                <div className="flex-1">
-                  <p className="text-[10px] text-cyan-700 font-bold uppercase tracking-widest leading-none">Próximo pago</p>
-                  <p className="text-xs font-bold text-navy-dark">{formatFecha(acuerdo.proximoPago.fecha)} · {formatCOP(acuerdo.proximoPago.monto)}</p>
+                {acuerdo.condiciones && (
+                  <div className="rounded-2xl bg-slate-50/70 border border-slate-100 p-4 mb-4">
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Condiciones pactadas</p>
+                    <p className="text-xs text-slate-600 font-medium leading-relaxed whitespace-pre-line">{acuerdo.condiciones}</p>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <InfoRow Icon={Calendar} label="Inicio" value={formatFecha(acuerdo.fechaInicio)} />
+                  <InfoRow Icon={Calendar} label="Fin"    value={formatFecha(acuerdo.fechaFin)} />
                 </div>
-              </div>
-            )}
-            <div className="mt-4">
-              <ProgressBar pct={acuerdo.cumplimiento} />
-            </div>
-          </Section>
-
-          <Section title="Historial de pagos">
-            <ul className="rounded-2xl border border-slate-100 divide-y divide-slate-50">
-              {acuerdo.cuotas.map((c) => (
-                <li key={c.numero} className="flex items-center justify-between gap-3 px-4 py-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="w-7 h-7 rounded-lg bg-slate-50 flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">
-                      {c.numero}
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-navy-dark">{formatCOP(c.monto)}</p>
-                      <p className="text-[10px] text-slate-400 font-medium">
-                        {c.estado === 'Pagada' && c.fechaPago
-                          ? `Pagada el ${formatFecha(c.fechaPago)}`
-                          : `Programada para ${formatFecha(c.fechaProgramada)}`}
-                      </p>
+                {acuerdo.proximoPago && (
+                  <div className="mt-4 flex items-center gap-3 rounded-2xl border border-cyan-100 bg-cyan-50/40 px-4 py-3">
+                    <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center text-cyan-600 shrink-0">
+                      <Clock size={16} />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-[10px] text-cyan-700 font-bold uppercase tracking-widest leading-none">Próximo pago</p>
+                      <p className="text-xs font-bold text-navy-dark">{formatFecha(acuerdo.proximoPago.fecha)} · {formatCOP(acuerdo.proximoPago.monto)}</p>
                     </div>
                   </div>
-                  <span className={clsx('px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest', ESTADO_CUOTA_BADGE[c.estado])}>
-                    {c.estado}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Section>
+                )}
+                <div className="mt-4">
+                  <ProgressBar pct={acuerdo.cumplimiento} />
+                </div>
+              </Section>
 
-          <Section title="Notas de seguimiento">
-            {acuerdo.notas.length === 0 ? (
-              <p className="text-xs text-slate-400 font-medium italic mb-3">Aún no hay notas registradas.</p>
-            ) : (
-              <ul className="space-y-3 mb-4">
-                {acuerdo.notas.map((n) => (
-                  <li key={n.id} className="rounded-2xl border border-slate-100 p-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="flex items-center gap-1.5 text-[11px] font-bold text-navy-dark">
-                        <FileText size={12} className="text-slate-400" /> {n.autor}
-                      </span>
-                      <span className="text-[10px] text-slate-400 font-medium">{formatFecha(n.fecha)}</span>
-                    </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">{n.texto}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="space-y-2">
-              <textarea
-                value={nuevaNota}
-                onChange={(e) => setNuevaNota(e.target.value)}
-                rows={3}
-                placeholder="Escribe una nota de seguimiento..."
-                className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/20 resize-none"
-              />
-              <button
-                disabled={!nuevaNota.trim()}
-                className="flex items-center gap-2 bg-slate-100 text-slate-600 px-4 py-2 rounded-xl text-xs font-bold hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-              >
-                <Plus size={14} /> Agregar nota
-              </button>
+              <Section title="Historial de pagos">
+                {acuerdo.cuotas.length === 0 ? (
+                  <p className="text-xs text-slate-400 font-medium italic">Sin cuotas registradas.</p>
+                ) : (
+                  <ul className="rounded-2xl border border-slate-100 divide-y divide-slate-50">
+                    {acuerdo.cuotas.map((c) => (
+                      <li key={c.numero} className="flex items-center justify-between gap-3 px-4 py-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="w-7 h-7 rounded-lg bg-slate-50 flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">
+                            {c.numero}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-navy-dark">{formatCOP(c.monto)}</p>
+                            <p className="text-[10px] text-slate-400 font-medium">
+                              {c.estado === 'Pagada' && c.fechaPago
+                                ? `Pagada el ${formatFecha(c.fechaPago)}`
+                                : `Programada para ${formatFecha(c.fechaProgramada)}`}
+                            </p>
+                          </div>
+                        </div>
+                        <span className={clsx('px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest', ESTADO_CUOTA_BADGE[c.estado])}>
+                          {c.estado}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Section>
+
+              <Section title="Notas de seguimiento">
+                {acuerdo.notas.length === 0 ? (
+                  <p className="text-xs text-slate-400 font-medium italic mb-3">Aún no hay notas registradas.</p>
+                ) : (
+                  <ul className="space-y-3 mb-4">
+                    {acuerdo.notas.map((n) => (
+                      <li key={n.id} className="rounded-2xl border border-slate-100 p-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="flex items-center gap-1.5 text-[11px] font-bold text-navy-dark">
+                            <FileText size={12} className="text-slate-400" /> {n.autor}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-medium">{formatFecha(n.fecha)}</span>
+                        </div>
+                        <p className="text-xs text-slate-600 leading-relaxed">{n.texto}</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="space-y-2">
+                  <textarea
+                    value={nuevaNota}
+                    onChange={(e) => setNuevaNota(e.target.value)}
+                    rows={3}
+                    placeholder="Escribe una nota de seguimiento..."
+                    className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/20 resize-none"
+                  />
+                  <button
+                    onClick={() => void handleAgregarNota()}
+                    disabled={!nuevaNota.trim() || busy === 'nota'}
+                    className="flex items-center gap-2 bg-slate-100 text-slate-600 px-4 py-2 rounded-xl text-xs font-bold hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  >
+                    {busy === 'nota' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                    {busy === 'nota' ? 'Guardando...' : 'Agregar nota'}
+                  </button>
+                </div>
+              </Section>
             </div>
-          </Section>
-        </div>
 
-        <footer className="sticky bottom-0 bg-white border-t border-slate-100 p-6 flex items-center gap-3 justify-end">
-          <button className="flex items-center gap-2 border border-red-200 text-red-600 bg-white hover:bg-red-50 px-4 py-2.5 rounded-xl text-xs font-bold transition-colors">
-            <XCircle size={14} /> Marcar incumplido
-          </button>
-          <button className="flex items-center gap-2 bg-[#006875] text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow-md hover:bg-[#004f58] transition-all">
-            <DollarSign size={14} /> Registrar pago
-          </button>
-        </footer>
+            <footer className="sticky bottom-0 bg-white border-t border-slate-100 p-6 flex items-center gap-3 justify-end">
+              <button
+                onClick={() => void handleMarcarIncumplido()}
+                disabled={busy !== null || acuerdo.estado === 'Incumplido' || acuerdo.estado === 'Cumplido'}
+                className="flex items-center gap-2 border border-red-200 text-red-600 bg-white hover:bg-red-50 px-4 py-2.5 rounded-xl text-xs font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {busy === 'incumplir' ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
+                Marcar incumplido
+              </button>
+              <button
+                onClick={() => void handleRegistrarPago()}
+                disabled={busy !== null || !acuerdo.proximoPago}
+                className="flex items-center gap-2 bg-[#006875] text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow-md hover:bg-[#004f58] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                {busy === 'pago' ? <Loader2 size={14} className="animate-spin" /> : <DollarSign size={14} />}
+                Registrar pago
+              </button>
+            </footer>
+          </>
+        )}
       </aside>
     </div>
   );
@@ -620,4 +736,3 @@ function initials(name: string): string {
   const second = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? '' : '';
   return (first + second).toUpperCase() || '?';
 }
-

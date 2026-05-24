@@ -1,18 +1,21 @@
-import { useMemo, useState, useRef, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Sparkles, Search, Target, ShieldAlert, TrendingUp, ShieldCheck,
   X, Wand2, BadgeCheck, Clock, AlertTriangle, CreditCard,
-  Filter, ChevronDown, Download,
+  Filter, ChevronDown, Download, Loader2, RefreshCw, AlertCircle,
+  CheckCircle2,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import {
-  MOCK_PERFILAMIENTO,
-  MOCK_RECUPERACION,
-  type ClientePerfilamiento,
-  type ClienteRecuperacion,
-  type NivelAfinidad,
-  type NivelRiesgo,
-} from '../data/estrategiasMock';
+  getPerfilamiento,
+  getRecuperacion,
+  generarEstrategias,
+  aplicarEstrategia,
+  type ClientePerfilamientoApi,
+  type ClienteRecuperacionApi,
+} from '../services/estrategias';
+import { getApiErrorMessage } from '../services/api';
+import type { NivelAfinidad, NivelRiesgo } from '../data/estrategiasMock';
 import { GrupoRiesgo, type ColumnaTabla } from '../components/estrategias/GrupoRiesgo';
 import {
   exportarPerfilamiento,
@@ -21,6 +24,14 @@ import {
 } from '../components/estrategias/exportar';
 
 type Seccion = 'perfilamiento' | 'recuperacion';
+
+interface EstrategiaModalData {
+  titulo: string;
+  subtitulo: string;
+  texto: string;
+  idCredito: string;
+  tipo: 'perfilamiento' | 'recuperacion';
+}
 
 // ── Helpers ──────────────────────────────────────────────
 const formatCOP = (v: number) =>
@@ -45,55 +56,103 @@ const NIVELES_RIESGO: NivelRiesgo[] = ['Alto', 'Medio', 'Bajo'];
 export function Estrategias() {
   const [seccion, setSeccion] = useState<Seccion>('perfilamiento');
   const [search, setSearch] = useState('');
-  const [estrategiaAbierta, setEstrategiaAbierta] = useState<{
-    titulo: string;
-    subtitulo: string;
-    texto: string;
-  } | null>(null);
+  const [estrategiaAbierta, setEstrategiaAbierta] = useState<EstrategiaModalData | null>(null);
 
+  const [perfilamiento, setPerfilamiento] = useState<ClientePerfilamientoApi[]>([]);
+  const [recuperacion, setRecuperacion] = useState<ClienteRecuperacionApi[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [generando, setGenerando] = useState(false);
+  const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [perf, rec] = await Promise.all([getPerfilamiento(), getRecuperacion()]);
+      setPerfilamiento(perf);
+      setRecuperacion(rec);
+    } catch (err) {
+      setError(getApiErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // Filtrado client-side por buscador (las listas no se reordenan ni cambian
+  // server-side al escribir).
   const perfilados = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return MOCK_PERFILAMIENTO;
-    return MOCK_PERFILAMIENTO.filter(
+    if (!q) return perfilamiento;
+    return perfilamiento.filter(
       (c) =>
         c.nombre.toLowerCase().includes(q) ||
         c.perfil.toLowerCase().includes(q) ||
         c.productoSugerido.toLowerCase().includes(q),
     );
-  }, [search]);
+  }, [search, perfilamiento]);
 
-  const recuperacion = useMemo(() => {
+  const recuperados = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return MOCK_RECUPERACION;
-    return MOCK_RECUPERACION.filter(
+    if (!q) return recuperacion;
+    return recuperacion.filter(
       (c) =>
         c.nombre.toLowerCase().includes(q) ||
         c.comportamientoPago.toLowerCase().includes(q),
     );
-  }, [search]);
+  }, [search, recuperacion]);
 
   const porNivelPerfilamiento = useMemo(() => {
-    const map: Record<NivelAfinidad, ClientePerfilamiento[]> = { Alto: [], Medio: [], Bajo: [] };
+    const map: Record<NivelAfinidad, ClientePerfilamientoApi[]> = { Alto: [], Medio: [], Bajo: [] };
     for (const c of perfilados) map[c.nivelAfinidad].push(c);
     return map;
   }, [perfilados]);
 
   const porNivelRecuperacion = useMemo(() => {
-    const map: Record<NivelRiesgo, ClienteRecuperacion[]> = { Alto: [], Medio: [], Bajo: [] };
-    for (const c of recuperacion) map[c.nivelRiesgo].push(c);
+    const map: Record<NivelRiesgo, ClienteRecuperacionApi[]> = { Alto: [], Medio: [], Bajo: [] };
+    for (const c of recuperados) map[c.nivelRiesgo].push(c);
     return map;
-  }, [recuperacion]);
+  }, [recuperados]);
 
   const stats = useMemo(() => ({
-    perfilamientoAlto: MOCK_PERFILAMIENTO.filter((c) => c.nivelAfinidad === 'Alto').length,
-    perfilamientoTotal: MOCK_PERFILAMIENTO.length,
-    recuperacionAlto: MOCK_RECUPERACION.filter((c) => c.nivelRiesgo === 'Alto').length,
-    recuperacionTotal: MOCK_RECUPERACION.length,
-    montoEnRiesgo: MOCK_RECUPERACION.reduce((acc, c) => acc + c.montoVencido, 0),
-  }), []);
+    perfilamientoAlto: perfilamiento.filter((c) => c.nivelAfinidad === 'Alto').length,
+    perfilamientoTotal: perfilamiento.length,
+    recuperacionAlto: recuperacion.filter((c) => c.nivelRiesgo === 'Alto').length,
+    recuperacionTotal: recuperacion.length,
+    montoEnRiesgo: recuperacion.reduce((acc, c) => acc + c.montoVencido, 0),
+  }), [perfilamiento, recuperacion]);
 
-  // Columnas para cada sección
-  const columnasPerfilamiento: ColumnaTabla<ClientePerfilamiento>[] = [
+  const handleGenerar = async () => {
+    setGenerando(true);
+    setFlash(null);
+    try {
+      await generarEstrategias();
+      await load();
+      setFlash({ kind: 'ok', text: 'Regeneración iniciada. Listado actualizado.' });
+    } catch (err) {
+      setFlash({ kind: 'err', text: getApiErrorMessage(err) });
+    } finally {
+      setGenerando(false);
+    }
+  };
+
+  const handleAplicar = async () => {
+    if (!estrategiaAbierta) return;
+    try {
+      await aplicarEstrategia(estrategiaAbierta.idCredito, estrategiaAbierta.tipo);
+      setFlash({ kind: 'ok', text: 'Estrategia aplicada y registrada como gestión.' });
+      setEstrategiaAbierta(null);
+    } catch (err) {
+      setFlash({ kind: 'err', text: getApiErrorMessage(err) });
+    }
+  };
+
+  // Columnas
+  const columnasPerfilamiento: ColumnaTabla<ClientePerfilamientoApi>[] = [
     {
       key: 'cliente',
       label: 'Cliente',
@@ -140,7 +199,7 @@ export function Estrategias() {
     },
   ];
 
-  const columnasRecuperacion: ColumnaTabla<ClienteRecuperacion>[] = [
+  const columnasRecuperacion: ColumnaTabla<ClienteRecuperacionApi>[] = [
     {
       key: 'cliente',
       label: 'Cliente',
@@ -192,17 +251,21 @@ export function Estrategias() {
     },
   ];
 
-  const abrirEstrategiaPerfilamiento = (c: ClientePerfilamiento) =>
+  const abrirEstrategiaPerfilamiento = (c: ClientePerfilamientoApi) =>
     setEstrategiaAbierta({
       titulo: c.nombre,
       subtitulo: `Producto sugerido: ${c.productoSugerido}`,
       texto: c.estrategia,
+      idCredito: c.idCredito,
+      tipo: 'perfilamiento',
     });
-  const abrirEstrategiaRecuperacion = (c: ClienteRecuperacion) =>
+  const abrirEstrategiaRecuperacion = (c: ClienteRecuperacionApi) =>
     setEstrategiaAbierta({
       titulo: c.nombre,
       subtitulo: `${c.diasMora} días de mora · ${formatCOP(c.montoVencido)} vencidos`,
       texto: c.estrategia,
+      idCredito: c.idCredito,
+      tipo: 'recuperacion',
     });
 
   return (
@@ -218,9 +281,27 @@ export function Estrategias() {
           </p>
         </div>
         <GenerarMenu
-          onExportarTodo={() => exportarTodo(MOCK_PERFILAMIENTO, MOCK_RECUPERACION)}
+          onGenerar={() => void handleGenerar()}
+          generando={generando}
+          onExportarTodo={() => exportarTodo(perfilamiento, recuperacion)}
         />
       </header>
+
+      {flash && (
+        <div
+          role="alert"
+          className={clsx(
+            'flex items-center gap-2 rounded-xl px-4 py-3 text-xs font-medium border',
+            flash.kind === 'ok'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+              : 'bg-red-50 border-red-200 text-red-700',
+          )}
+        >
+          {flash.kind === 'ok' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+          <span>{flash.text}</span>
+          <button onClick={() => setFlash(null)} className="ml-auto opacity-70 hover:opacity-100">×</button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatBox
@@ -249,7 +330,7 @@ export function Estrategias() {
         />
         <StatBox
           label="Estrategias generadas"
-          value={String(MOCK_PERFILAMIENTO.length + MOCK_RECUPERACION.length)}
+          value={String(perfilamiento.length + recuperacion.length)}
           sub="por el agente IA hoy"
           Icon={Sparkles}
           bg="bg-indigo-50"
@@ -290,52 +371,69 @@ export function Estrategias() {
         </div>
       </div>
 
-      <div className="space-y-4">
-        {seccion === 'perfilamiento'
-          ? NIVELES_AFINIDAD.map((nivel) => {
-              const b = AFINIDAD_BADGE[nivel];
-              const clientesNivel = porNivelPerfilamiento[nivel];
-              return (
-                <GrupoRiesgo
-                  key={`perf-${nivel}`}
-                  nivel={nivel}
-                  colorBadge={`${b.bg} ${b.text}`}
-                  colorIndicador={b.dot}
-                  clientes={clientesNivel}
-                  columnas={columnasPerfilamiento}
-                  initiallyExpanded={nivel === 'Alto'}
-                  onVerEstrategia={abrirEstrategiaPerfilamiento}
-                  onExportarGrupo={(list) => exportarPerfilamiento(list, `grupo-${nivel.toLowerCase()}`)}
-                  onExportarSeleccionados={(list) => exportarPerfilamiento(list, `seleccion-${nivel.toLowerCase()}`)}
-                />
-              );
-            })
-          : NIVELES_RIESGO.map((nivel) => {
-              const b = RIESGO_BADGE[nivel];
-              const clientesNivel = porNivelRecuperacion[nivel];
-              return (
-                <GrupoRiesgo
-                  key={`rec-${nivel}`}
-                  nivel={nivel}
-                  colorBadge={`${b.bg} ${b.text}`}
-                  colorIndicador={b.dot}
-                  clientes={clientesNivel}
-                  columnas={columnasRecuperacion}
-                  initiallyExpanded={nivel === 'Alto'}
-                  onVerEstrategia={abrirEstrategiaRecuperacion}
-                  onExportarGrupo={(list) => exportarRecuperacion(list, `grupo-${nivel.toLowerCase()}`)}
-                  onExportarSeleccionados={(list) => exportarRecuperacion(list, `seleccion-${nivel.toLowerCase()}`)}
-                />
-              );
-            })}
-      </div>
+      {loading ? (
+        <div className="glass-card rounded-3xl flex flex-col items-center justify-center py-24 gap-3 text-slate-400">
+          <Loader2 size={32} className="animate-spin" />
+          <p className="text-sm font-medium">Cargando estrategias...</p>
+        </div>
+      ) : error ? (
+        <div className="glass-card rounded-3xl flex flex-col items-center justify-center py-24 gap-4 text-center px-6">
+          <AlertCircle size={32} className="text-red-500" />
+          <div>
+            <p className="text-sm font-bold text-navy-dark">No se pudieron cargar las estrategias</p>
+            <p className="text-xs text-slate-500 mt-1">{error}</p>
+          </div>
+          <button onClick={() => void load()} className="btn-primary flex items-center gap-2">
+            <RefreshCw size={14} /> Reintentar
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {seccion === 'perfilamiento'
+            ? NIVELES_AFINIDAD.map((nivel) => {
+                const b = AFINIDAD_BADGE[nivel];
+                const clientesNivel = porNivelPerfilamiento[nivel];
+                return (
+                  <GrupoRiesgo
+                    key={`perf-${nivel}`}
+                    nivel={nivel}
+                    colorBadge={`${b.bg} ${b.text}`}
+                    colorIndicador={b.dot}
+                    clientes={clientesNivel}
+                    columnas={columnasPerfilamiento}
+                    initiallyExpanded={nivel === 'Alto'}
+                    onVerEstrategia={abrirEstrategiaPerfilamiento}
+                    onExportarGrupo={(list) => exportarPerfilamiento(list, `grupo-${nivel.toLowerCase()}`)}
+                    onExportarSeleccionados={(list) => exportarPerfilamiento(list, `seleccion-${nivel.toLowerCase()}`)}
+                  />
+                );
+              })
+            : NIVELES_RIESGO.map((nivel) => {
+                const b = RIESGO_BADGE[nivel];
+                const clientesNivel = porNivelRecuperacion[nivel];
+                return (
+                  <GrupoRiesgo
+                    key={`rec-${nivel}`}
+                    nivel={nivel}
+                    colorBadge={`${b.bg} ${b.text}`}
+                    colorIndicador={b.dot}
+                    clientes={clientesNivel}
+                    columnas={columnasRecuperacion}
+                    initiallyExpanded={nivel === 'Alto'}
+                    onVerEstrategia={abrirEstrategiaRecuperacion}
+                    onExportarGrupo={(list) => exportarRecuperacion(list, `grupo-${nivel.toLowerCase()}`)}
+                    onExportarSeleccionados={(list) => exportarRecuperacion(list, `seleccion-${nivel.toLowerCase()}`)}
+                  />
+                );
+              })}
+        </div>
+      )}
 
       {estrategiaAbierta && (
         <EstrategiaModal
-          titulo={estrategiaAbierta.titulo}
-          subtitulo={estrategiaAbierta.subtitulo}
-          texto={estrategiaAbierta.texto}
+          data={estrategiaAbierta}
           onClose={() => setEstrategiaAbierta(null)}
+          onAplicar={() => void handleAplicar()}
         />
       )}
     </div>
@@ -362,7 +460,13 @@ function SectionTab({
   );
 }
 
-function GenerarMenu({ onExportarTodo }: { onExportarTodo: () => void }) {
+function GenerarMenu({
+  onGenerar, generando, onExportarTodo,
+}: {
+  onGenerar: () => void;
+  generando: boolean;
+  onExportarTodo: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -378,8 +482,13 @@ function GenerarMenu({ onExportarTodo }: { onExportarTodo: () => void }) {
   return (
     <div ref={ref} className="relative">
       <div className="flex">
-        <button className="flex items-center gap-2 bg-[#006875] text-white pl-5 pr-4 py-3 rounded-l-xl font-bold shadow-lg hover:bg-[#004f58] transition-all">
-          <Wand2 size={18} /> Generar nuevas
+        <button
+          onClick={onGenerar}
+          disabled={generando}
+          className="flex items-center gap-2 bg-[#006875] text-white pl-5 pr-4 py-3 rounded-l-xl font-bold shadow-lg hover:bg-[#004f58] disabled:opacity-60 disabled:cursor-not-allowed transition-all"
+        >
+          {generando ? <Loader2 size={18} className="animate-spin" /> : <Wand2 size={18} />}
+          {generando ? 'Generando...' : 'Generar nuevas'}
         </button>
         <button
           onClick={() => setOpen((v) => !v)}
@@ -404,10 +513,17 @@ function GenerarMenu({ onExportarTodo }: { onExportarTodo: () => void }) {
 }
 
 function EstrategiaModal({
-  titulo, subtitulo, texto, onClose,
+  data, onClose, onAplicar,
 }: {
-  titulo: string; subtitulo: string; texto: string; onClose: () => void;
+  data: EstrategiaModalData;
+  onClose: () => void;
+  onAplicar: () => void;
 }) {
+  const [aplicando, setAplicando] = useState(false);
+  const handle = async () => {
+    setAplicando(true);
+    try { await onAplicar(); } finally { setAplicando(false); }
+  };
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-navy-dark/40 backdrop-blur-sm"
@@ -429,8 +545,8 @@ function EstrategiaModal({
                 <span className="text-[9px] font-bold text-indigo-500 uppercase tracking-widest">Estrategia IA</span>
                 <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
               </div>
-              <h3 className="text-lg font-bold text-navy-dark leading-tight">{titulo}</h3>
-              <p className="text-xs text-slate-500 font-medium mt-1">{subtitulo}</p>
+              <h3 className="text-lg font-bold text-navy-dark leading-tight">{data.titulo}</h3>
+              <p className="text-xs text-slate-500 font-medium mt-1">{data.subtitulo}</p>
             </div>
           </div>
           <button
@@ -443,18 +559,24 @@ function EstrategiaModal({
         </header>
 
         <div className="p-6 overflow-y-auto">
-          <p className="text-sm text-slate-700 leading-relaxed font-medium whitespace-pre-line">{texto}</p>
+          <p className="text-sm text-slate-700 leading-relaxed font-medium whitespace-pre-line">{data.texto}</p>
         </div>
 
         <footer className="p-6 border-t border-slate-100 flex items-center justify-end gap-3 bg-slate-50/50">
           <button
             onClick={onClose}
-            className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-100 transition-colors"
+            disabled={aplicando}
+            className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-100 transition-colors disabled:opacity-50"
           >
             Cerrar
           </button>
-          <button className="flex items-center gap-2 bg-[#006875] text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow-md hover:bg-[#004f58] transition-all">
-            <Sparkles size={14} /> Aplicar estrategia
+          <button
+            onClick={() => void handle()}
+            disabled={aplicando}
+            className="flex items-center gap-2 bg-[#006875] text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow-md hover:bg-[#004f58] disabled:opacity-60 disabled:cursor-not-allowed transition-all"
+          >
+            {aplicando ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+            {aplicando ? 'Aplicando...' : 'Aplicar estrategia'}
           </button>
         </footer>
       </div>
