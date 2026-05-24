@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  LayoutDashboard, Wallet, FileText, Rocket, Bell, Search,
-  HelpCircle, ChevronDown, Wand2, LogOut, Sparkles,
+  LayoutDashboard, Wallet, FileText, Rocket,
+  ChevronDown, Wand2, LogOut, Sparkles,
   MessageSquare,
 } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
@@ -128,25 +128,8 @@ export function Header() {
   };
 
   return (
-    <header className="h-20 fixed top-0 right-0 left-64 bg-white border-b border-slate-200 z-10 px-8 flex items-center justify-between">
-      <div className="flex-1 max-w-md relative">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-        <input
-          type="text"
-          placeholder="Buscar estudiantes, acuerdos, gestiones..."
-          className="w-full bg-white rounded-full py-2.5 pl-12 pr-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/30 text-sm"
-        />
-      </div>
-
+    <header className="h-20 fixed top-0 right-0 left-64 bg-white border-b border-slate-200 z-10 px-8 flex items-center justify-end">
       <div className="flex items-center gap-6">
-        <button className="flex items-center gap-2 text-slate-500 hover:text-navy-dark transition-colors cursor-pointer relative">
-          <Bell size={20} />
-          <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center border-2 border-white">1</span>
-        </button>
-        <button aria-label="Ayuda" className="text-slate-500 hover:text-navy-dark cursor-pointer">
-          <HelpCircle size={20} />
-        </button>
-
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => setMenuOpen((v) => !v)}

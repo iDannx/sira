@@ -1,15 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Sparkles, Search, Target, ShieldAlert, TrendingUp, ShieldCheck,
   X, Wand2, BadgeCheck, Clock, AlertTriangle, CreditCard,
-  Filter, ChevronDown, Download, Loader2, RefreshCw, AlertCircle,
+  Filter, Loader2, RefreshCw, AlertCircle,
   CheckCircle2,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import {
   getPerfilamiento,
   getRecuperacion,
-  generarEstrategias,
   aplicarEstrategia,
   type ClientePerfilamientoApi,
   type ClienteRecuperacionApi,
@@ -20,7 +19,6 @@ import { GrupoRiesgo, type ColumnaTabla } from '../components/estrategias/GrupoR
 import {
   exportarPerfilamiento,
   exportarRecuperacion,
-  exportarTodo,
 } from '../components/estrategias/exportar';
 
 type Seccion = 'perfilamiento' | 'recuperacion';
@@ -62,7 +60,6 @@ export function Estrategias() {
   const [recuperacion, setRecuperacion] = useState<ClienteRecuperacionApi[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [generando, setGenerando] = useState(false);
   const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -125,20 +122,6 @@ export function Estrategias() {
     recuperacionTotal: recuperacion.length,
     montoEnRiesgo: recuperacion.reduce((acc, c) => acc + c.montoVencido, 0),
   }), [perfilamiento, recuperacion]);
-
-  const handleGenerar = async () => {
-    setGenerando(true);
-    setFlash(null);
-    try {
-      await generarEstrategias();
-      await load();
-      setFlash({ kind: 'ok', text: 'Regeneración iniciada. Listado actualizado.' });
-    } catch (err) {
-      setFlash({ kind: 'err', text: getApiErrorMessage(err) });
-    } finally {
-      setGenerando(false);
-    }
-  };
 
   const handleAplicar = async () => {
     if (!estrategiaAbierta) return;
@@ -280,11 +263,6 @@ export function Estrategias() {
             Recomendaciones generadas por IA, agrupadas por perfil de riesgo para gestión a gran escala.
           </p>
         </div>
-        <GenerarMenu
-          onGenerar={() => void handleGenerar()}
-          generando={generando}
-          onExportarTodo={() => exportarTodo(perfilamiento, recuperacion)}
-        />
       </header>
 
       {flash && (
@@ -321,7 +299,7 @@ export function Estrategias() {
           color="text-red-500"
         />
         <StatBox
-          label="Monto vencido total"
+          label="Monto total en mora"
           value={formatCOP(stats.montoEnRiesgo)}
           sub="cartera bajo gestión IA"
           Icon={CreditCard}
@@ -457,58 +435,6 @@ function SectionTab({
       <Icon size={14} />
       {label}
     </button>
-  );
-}
-
-function GenerarMenu({
-  onGenerar, generando, onExportarTodo,
-}: {
-  onGenerar: () => void;
-  generando: boolean;
-  onExportarTodo: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [open]);
-
-  return (
-    <div ref={ref} className="relative">
-      <div className="flex">
-        <button
-          onClick={onGenerar}
-          disabled={generando}
-          className="flex items-center gap-2 bg-[#006875] text-white pl-5 pr-4 py-3 rounded-l-xl font-bold shadow-lg hover:bg-[#004f58] disabled:opacity-60 disabled:cursor-not-allowed transition-all"
-        >
-          {generando ? <Loader2 size={18} className="animate-spin" /> : <Wand2 size={18} />}
-          {generando ? 'Generando...' : 'Generar nuevas'}
-        </button>
-        <button
-          onClick={() => setOpen((v) => !v)}
-          aria-label="Más opciones"
-          className="bg-[#006875] text-white px-3 py-3 rounded-r-xl shadow-lg border-l border-white/20 hover:bg-[#004f58] transition-all"
-        >
-          <ChevronDown size={16} className={clsx('transition-transform', open && 'rotate-180')} />
-        </button>
-      </div>
-      {open && (
-        <div role="menu" className="absolute right-0 top-full mt-2 w-60 bg-white border border-slate-100 rounded-2xl shadow-xl py-2 z-30">
-          <button
-            onClick={() => { setOpen(false); onExportarTodo(); }}
-            className="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"
-          >
-            <Download size={14} className="text-[#006875]" /> Exportar todo (.xlsx)
-          </button>
-        </div>
-      )}
-    </div>
   );
 }
 

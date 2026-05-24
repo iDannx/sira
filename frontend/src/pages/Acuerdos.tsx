@@ -142,9 +142,6 @@ export function Acuerdos() {
             Gestión de planes de pago activos, cumplidos e incumplidos.
           </p>
         </div>
-        <button className="flex items-center gap-2 bg-[#006875] text-white px-6 py-3 rounded-xl font-bold shadow-lg hover:bg-[#004f58] transition-all">
-          <Plus size={18} /> Nuevo acuerdo
-        </button>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

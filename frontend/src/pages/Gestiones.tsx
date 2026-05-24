@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { clsx } from 'clsx';
 import {
-  Search, Filter, Phone, Mail, MessageSquare, Plus, X, Eye, Calendar,
+  Search, Filter, Phone, Mail, MessageSquare, X, Eye, Calendar,
   CheckCircle2, AlertCircle, Clock, ShieldAlert, Gavel, ChevronLeft, ChevronRight,
-  TrendingUp, Users, Sparkles, Bot, User as UserIcon, Send, DollarSign,
+  TrendingUp, Sparkles, Bot, User as UserIcon, DollarSign,
   Loader2, RefreshCw,
 } from 'lucide-react';
 import {
@@ -12,7 +12,6 @@ import {
   listPromesas,
   listJuridica,
   getGestion,
-  crearGestion,
   type ResumenGestiones,
   type ListGestionesParams,
   type EstadoPromesa,
@@ -123,7 +122,6 @@ export function Gestiones() {
   const [juridicaLoading, setJuridicaLoading] = useState(false);
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [showNueva, setShowNueva] = useState(false);
 
   // Debounce búsqueda
   useEffect(() => {
@@ -207,12 +205,6 @@ export function Gestiones() {
             Historial y seguimiento de contactos con clientes.
           </p>
         </div>
-        <button
-          onClick={() => setShowNueva(true)}
-          className="flex items-center gap-2 bg-[#006875] text-white px-6 py-3 rounded-xl font-bold shadow-lg hover:bg-[#004f58] transition-all"
-        >
-          <Plus size={18} /> Nueva gestión
-        </button>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -409,13 +401,6 @@ export function Gestiones() {
 
       {selectedId !== null && (
         <GestionDrawer id={selectedId} onClose={() => setSelectedId(null)} />
-      )}
-
-      {showNueva && (
-        <NuevaGestionModal
-          onClose={() => setShowNueva(false)}
-          onCreated={() => { setShowNueva(false); void loadTodas(); }}
-        />
       )}
     </div>
   );
@@ -813,205 +798,6 @@ function DrawerBody({ gestion }: { gestion: Gestion }) {
           </ul>
         )}
       </Section>
-    </div>
-  );
-}
-
-// ── Modal Nueva Gestión ──────────────────────────────────
-function NuevaGestionModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [busqueda, setBusqueda] = useState('');
-  const [canal, setCanal] = useState<CanalGestion>('whatsapp');
-  const [resultado, setResultado] = useState<ResultadoGestion>('enviado');
-  const [valorPrometido, setValorPrometido] = useState('');
-  const [fechaPromesa, setFechaPromesa] = useState('');
-  const [notas, setNotas] = useState('');
-  const [sugerencias, setSugerencias] = useState<Gestion[]>([]);
-  const [buscando, setBuscando] = useState(false);
-  const [creando, setCreando] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const [clienteSel, setClienteSel] = useState<Gestion | null>(null);
-
-  // Búsqueda en backend con debounce
-  useEffect(() => {
-    if (!busqueda.trim() || clienteSel) {
-      setSugerencias([]);
-      return;
-    }
-    const t = setTimeout(() => {
-      setBuscando(true);
-      listGestiones({ search: busqueda.trim(), limit: 5 })
-        .then(({ items }) => {
-          // De-duplica por idCredito.
-          const seen = new Set<string>();
-          const out: Gestion[] = [];
-          for (const g of items) {
-            if (seen.has(g.idCredito)) continue;
-            seen.add(g.idCredito);
-            out.push(g);
-          }
-          setSugerencias(out);
-        })
-        .catch((err) => setError(getApiErrorMessage(err)))
-        .finally(() => setBuscando(false));
-    }, 300);
-    return () => clearTimeout(t);
-  }, [busqueda, clienteSel]);
-
-  const handleCrear = async () => {
-    if (!clienteSel) return;
-    setCreando(true);
-    setError(null);
-    try {
-      await crearGestion({
-        id_credito: clienteSel.idCredito,
-        canal,
-        resultado,
-        valor_promesa: resultado === 'promesa_pago' ? Number(valorPrometido) : null,
-        fecha_promesa: resultado === 'promesa_pago' ? fechaPromesa : null,
-        notas: notas || null,
-      });
-      onCreated();
-    } catch (err) {
-      setError(getApiErrorMessage(err));
-    } finally {
-      setCreando(false);
-    }
-  };
-
-  const puedeCrear =
-    clienteSel !== null &&
-    (resultado !== 'promesa_pago' ||
-      (Number(valorPrometido) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(fechaPromesa)));
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-navy-dark/40 backdrop-blur-sm" onClick={onClose} role="dialog" aria-modal="true">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <header className="flex items-start justify-between gap-4 p-6 border-b border-slate-100">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-[#006875] text-white flex items-center justify-center shrink-0">
-              <Plus size={20} />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-navy-dark leading-tight">Nueva gestión</h3>
-              <p className="text-xs text-slate-500 font-medium">Registrar un contacto con un cliente</p>
-            </div>
-          </div>
-          <button onClick={onClose} aria-label="Cerrar" className="text-slate-400 hover:text-navy-dark p-2 rounded-lg hover:bg-slate-100 transition-colors">
-            <X size={18} />
-          </button>
-        </header>
-
-        <div className="p-6 space-y-5 overflow-y-auto">
-          {error && (
-            <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 rounded-xl px-3 py-2 text-xs font-medium">
-              <AlertCircle size={14} /> {error}
-            </div>
-          )}
-
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Cliente / Crédito</label>
-            {clienteSel ? (
-              <div className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 bg-slate-50/60">
-                <div className="flex items-center gap-3">
-                  <Users size={16} className="text-slate-400" />
-                  <div>
-                    <p className="text-xs font-bold text-navy-dark">{clienteSel.nombre}</p>
-                    <p className="text-[10px] text-slate-400 font-medium">{clienteSel.numeroCredito}</p>
-                  </div>
-                </div>
-                <button onClick={() => { setClienteSel(null); setBusqueda(''); }} className="text-slate-400 hover:text-navy-dark">
-                  <X size={14} />
-                </button>
-              </div>
-            ) : (
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                <input
-                  type="text" value={busqueda} onChange={(e) => setBusqueda(e.target.value)}
-                  placeholder="Buscar por nombre o número de crédito..."
-                  className="w-full bg-white border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/20"
-                />
-                {buscando && (
-                  <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-slate-400" />
-                )}
-                {sugerencias.length > 0 && (
-                  <ul className="mt-2 border border-slate-100 rounded-xl divide-y divide-slate-50 bg-white shadow-md max-h-48 overflow-y-auto">
-                    {sugerencias.map((s) => (
-                      <li key={s.idCredito}>
-                        <button onClick={() => { setClienteSel(s); setBusqueda(''); }}
-                                className="w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors">
-                          <p className="text-xs font-bold text-navy-dark">{s.nombre}</p>
-                          <p className="text-[10px] text-slate-400 font-medium">{s.numeroCredito}</p>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <FieldSelect label="Canal" value={canal} onChange={(v) => setCanal(v as CanalGestion)}
-              options={[{value:'whatsapp',label:'WhatsApp'},{value:'llamada',label:'Llamada'},{value:'email',label:'Email'},{value:'sms',label:'SMS'}]} />
-            <FieldSelect label="Resultado" value={resultado} onChange={(v) => setResultado(v as ResultadoGestion)}
-              options={[{value:'enviado',label:'Enviado'},{value:'promesa_pago',label:'Promesa de pago'},{value:'no_contesta',label:'No contesta'},{value:'rechazado',label:'Rechazado'}]} />
-          </div>
-
-          {resultado === 'promesa_pago' && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Valor prometido (COP)</label>
-                <input type="number" value={valorPrometido} onChange={(e) => setValorPrometido(e.target.value)}
-                  placeholder="0" min={0}
-                  className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/20" />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Fecha promesa</label>
-                <input type="date" value={fechaPromesa} onChange={(e) => setFechaPromesa(e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/20" />
-              </div>
-            </div>
-          )}
-
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Notas</label>
-            <textarea rows={3} value={notas} onChange={(e) => setNotas(e.target.value)}
-              placeholder="Detalle del contacto, acuerdos, próximos pasos..."
-              className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/20 resize-none" />
-          </div>
-        </div>
-
-        <footer className="p-6 border-t border-slate-100 flex items-center justify-end gap-3 bg-slate-50/50">
-          <button onClick={onClose} disabled={creando} className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-100 transition-colors disabled:opacity-50">
-            Cancelar
-          </button>
-          <button
-            disabled={!puedeCrear || creando}
-            onClick={() => void handleCrear()}
-            className="flex items-center gap-2 bg-[#006875] text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow-md hover:bg-[#004f58] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-          >
-            {creando ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-            {creando ? 'Registrando...' : 'Registrar gestión'}
-          </button>
-        </footer>
-      </div>
-    </div>
-  );
-}
-
-function FieldSelect({ label, value, onChange, options }: {
-  label: string; value: string; onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <div>
-      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">{label}</label>
-      <select value={value} onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/20 cursor-pointer">
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Plus, Search, ChevronDown, MoreHorizontal, Play, MessageSquare, CreditCard,
+  Search, ChevronDown, MoreHorizontal, Play, MessageSquare, CreditCard,
   Workflow, Mail, Bell, FileText, ToggleRight, ToggleLeft, Edit2, BarChart2,
   Wand2, ChevronLeft, ChevronRight, Loader2, AlertCircle, RefreshCw, CheckCircle2,
 } from 'lucide-react';
@@ -147,10 +147,6 @@ export function Automations() {
           </div>
           <p className="text-slate-500 text-sm font-medium">Diseña, activa y monitorea flujos automáticos que te ayudan a gestionar, comunicar y recuperar de manera inteligente.</p>
         </div>
-        <button className="flex items-center gap-2 bg-[#006875] text-white px-6 py-3 rounded-xl font-bold shadow-lg hover:bg-[#004f58] transition-all">
-          <Plus size={20} />
-          <span>Nueva automatización</span>
-        </button>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
