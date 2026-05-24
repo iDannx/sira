@@ -147,6 +147,68 @@ export const getEvolucionRecuperacion = async (
   }
 };
 
+export const getCreditosMoraPorTipo = async (
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const { rows } = await query<{ tipo_credito: string | null; cantidad: string }>(
+      `SELECT cr.tipo_credito, COUNT(*)::text AS cantidad
+         FROM cartera.creditos cr
+        WHERE cr.estado = 'EN_MORA'
+        GROUP BY cr.tipo_credito
+        ORDER BY COUNT(*) DESC`,
+    );
+
+    res.json({
+      success: true,
+      data: rows.map((r) => ({
+        tipo: r.tipo_credito ?? 'OTRO',
+        cantidad: num(r.cantidad),
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getEstadoJuridico = async (
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const fechaCorte = await getLatestCorte();
+    const { rows } = await query<{
+      estado_juridico: string | null;
+      cantidad: string;
+      saldo_total: string | null;
+    }>(
+      `SELECT
+         COALESCE(c.estado_juridico, 'SIN_PROCESO') AS estado_juridico,
+         COUNT(*)::text                              AS cantidad,
+         COALESCE(SUM(c.saldo_total), 0)::text       AS saldo_total
+       FROM cartera.cartera c
+       WHERE c.fecha_corte = $1
+       GROUP BY COALESCE(c.estado_juridico, 'SIN_PROCESO')
+       ORDER BY COUNT(*) DESC`,
+      [fechaCorte],
+    );
+
+    res.json({
+      success: true,
+      data: rows.map((r) => ({
+        estado: r.estado_juridico ?? 'SIN_PROCESO',
+        cantidad: num(r.cantidad),
+        saldoTotal: Math.round(num(r.saldo_total)),
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 export const getRiesgoDesercion = async (
   _req: Request,
   res: Response,

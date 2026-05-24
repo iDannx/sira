@@ -272,11 +272,26 @@ const buildClientesWhere = (
   const params: unknown[] = [fechaCorte];
 
   if (filters.search) {
-    params.push(`%${filters.search}%`);
-    const i = params.length;
-    conditions.push(
-      `((cl.primer_nombre || ' ' || cl.primer_apellido) ILIKE $${i} OR cl.numero_documento ILIKE $${i})`,
-    );
+    const raw = filters.search.trim();
+    params.push(`%${raw}%`);
+    const iRaw = params.length;
+    // Si parece un ID visible "C-XXXXXXXX" (o solo hex), busca también por
+    // prefijo del UUID del cliente.
+    const idMatch = /^[Cc]-?([0-9A-Fa-f]+)$/.exec(raw);
+    if (idMatch) {
+      params.push(`${idMatch[1].toLowerCase()}%`);
+      const iHex = params.length;
+      conditions.push(
+        `((cl.primer_nombre || ' ' || cl.primer_apellido) ILIKE $${iRaw}
+          OR cl.numero_documento ILIKE $${iRaw}
+          OR cl.id_cliente::text ILIKE $${iHex})`,
+      );
+    } else {
+      conditions.push(
+        `((cl.primer_nombre || ' ' || cl.primer_apellido) ILIKE $${iRaw}
+          OR cl.numero_documento ILIKE $${iRaw})`,
+      );
+    }
   }
 
   if (filters.riesgo) {

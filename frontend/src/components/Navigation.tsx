@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  LayoutDashboard, Wallet, FileText, Rocket,
-  ChevronDown, Wand2, LogOut, Sparkles,
-  MessageSquare,
+  LayoutDashboard, Wallet, FileText,
+  ChevronDown, Wand2, LogOut, Megaphone,
 } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -48,9 +47,7 @@ export function Sidebar() {
     { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
     { name: 'Cartera', icon: Wallet, to: '/cartera' },
     { name: 'Acuerdos', icon: FileText, to: '/acuerdos' },
-    { name: 'Gestiones', icon: MessageSquare, to: '/gestiones' },
-    { name: 'Predicción de riesgo', icon: Rocket, to: '/predictive-risk' },
-    { name: 'Estrategias', icon: Sparkles, to: '/estrategias' },
+    { name: 'Campañas', icon: Megaphone, to: '/campanas' },
     { name: 'Automatizaciones', icon: Wand2, to: '/automations' },
   ];
 

@@ -3,10 +3,9 @@ import { MainLayout } from './layouts/MainLayout';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Dashboard } from './pages/Dashboard';
 import { Automations } from './pages/Automations';
+import { Campanas } from './pages/Campanas';
 import { Cartera } from './pages/Cartera';
 import { Acuerdos } from './pages/Acuerdos';
-import { Estrategias } from './pages/Estrategias';
-import { Gestiones } from './pages/Gestiones';
 import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
 import { NotFound } from './pages/NotFound';
@@ -28,12 +27,10 @@ export default function App() {
 
         <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
         <Route path="/automations" element={<Protected><Automations /></Protected>} />
-        <Route path="/estrategias" element={<Protected><Estrategias /></Protected>} />
+        <Route path="/campanas" element={<Protected><Campanas /></Protected>} />
 
         <Route path="/cartera" element={<Protected><Cartera /></Protected>} />
         <Route path="/acuerdos" element={<Protected><Acuerdos /></Protected>} />
-        <Route path="/gestiones" element={<Protected><Gestiones /></Protected>} />
-        <Route path="/predictive-risk" element={<Protected><PlaceholderPage title="Predicción de Riesgo" /></Protected>} />
 
         <Route path="/404" element={<NotFound />} />
         <Route path="*" element={<Navigate to="/404" replace />} />

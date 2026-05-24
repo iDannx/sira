@@ -1,34 +1,43 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  TrendingUp, TrendingDown, ChevronRight, ChevronDown, Landmark, AlertCircle, CircleCheckBig,
-  BarChart3, Wallet, Clock, CalendarDays, AlertTriangle, Info, Users, ShieldCheck,
+  TrendingUp, ChevronDown, Landmark, AlertCircle, CircleCheckBig,
+  BarChart3, Wallet, Clock, CalendarDays, AlertTriangle, Info,
   PieChart as PieIcon, Loader2, RefreshCw,
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell,
 } from 'recharts';
 import {
   getStats,
   getDistribucionCartera,
   getEvolucionRecuperacion,
-  getRiesgoDesercion,
 } from '../services/dashboard';
 import { getApiErrorMessage } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import {
-  formatCOPCompact,
-  formatCOP,
-  formatNumber,
   formatPorcentaje,
   formatFechaCorta,
   calificacionLabel,
 } from '../utils/format';
+
+// Formato uniforme en millones para todos los montos del Dashboard.
+// Ej: 1.234.567.890 → "$1.234M" · 865.000.000 → "$865M" · 1.500.000 → "$1,50M".
+const MILLONES_FORMATTER_INT  = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const MILLONES_FORMATTER_DEC1 = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const MILLONES_FORMATTER_DEC2 = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function formatMillones(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '$0M';
+  const m = value / 1_000_000;
+  const abs = Math.abs(m);
+  const fmt = abs >= 100 ? MILLONES_FORMATTER_INT
+            : abs >= 10  ? MILLONES_FORMATTER_DEC1
+                         : MILLONES_FORMATTER_DEC2;
+  return `$${fmt.format(m)}M`;
+}
 import type {
   DashboardStats,
   DistribucionCarteraItem,
   EvolucionRecuperacionItem,
-  RiesgoDesercion,
   Calificacion,
 } from '../types/api';
 
@@ -47,26 +56,27 @@ interface DashboardData {
   stats: DashboardStats;
   distribucion: DistribucionCarteraItem[];
   evolucion: EvolucionRecuperacionItem[];
-  riesgo: RiesgoDesercion;
 }
+
+type EvolucionMeses = 3 | 6 | 12;
 
 export function Dashboard() {
   const { user } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [evolucionMeses, setEvolucionMeses] = useState<EvolucionMeses>(12);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [stats, distribucion, evolucion, riesgo] = await Promise.all([
+      const [stats, distribucion, evolucion] = await Promise.all([
         getStats(),
         getDistribucionCartera(),
         getEvolucionRecuperacion(),
-        getRiesgoDesercion(),
       ]);
-      setData({ stats, distribucion, evolucion, riesgo });
+      setData({ stats, distribucion, evolucion });
     } catch (err) {
       setError(getApiErrorMessage(err));
     } finally {
@@ -77,6 +87,13 @@ export function Dashboard() {
   useEffect(() => {
     void load();
   }, []);
+
+  // El backend ya devuelve un arreglo ordenado por mes y sin valores futuros.
+  // El selector recorta los últimos N meses para visualizar 12/6/3.
+  const evolucionFiltrada = useMemo(() => {
+    const evo = data?.evolucion ?? [];
+    return evo.slice(-evolucionMeses);
+  }, [data?.evolucion, evolucionMeses]);
 
   const firstName = user?.name?.split(' ')[0] ?? 'Administrador';
 
@@ -106,13 +123,8 @@ export function Dashboard() {
 
   if (!data) return null;
 
-  // Extracción defensiva: si la API responde con un shape parcial,
-  // cada sección del JSX se renderiza con un guard que evita acceder
-  // a propiedades de un objeto/array indefinido.
   const stats = data.stats ?? null;
   const distribucion = data.distribucion ?? [];
-  const evolucion = data.evolucion ?? [];
-  const riesgo = data.riesgo ?? null;
 
   return (
     <div className="space-y-8 pb-12">
@@ -125,10 +137,10 @@ export function Dashboard() {
 
       {stats && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <StatCard title="Cartera total"        value={formatCOPCompact(stats.carteraTotal ?? 0)}     trend={`${stats.tendencias?.carteraTotal ?? '+0%'} vs mes anterior`}    icon={Landmark}       color="blue"          areaData={evolucion} />
-          <StatCard title="Cartera vencida"      value={formatCOPCompact(stats.carteraVencida ?? 0)}   trend={`${stats.tendencias?.carteraVencida ?? '+0%'} vs mes anterior`}  icon={AlertCircle}    color="purple"  isBadTrend areaData={evolucion} />
-          <StatCard title="Cartera al día"       value={formatCOPCompact(stats.carteraAlDia ?? 0)}     trend={`${stats.tendencias?.carteraAlDia ?? '+0%'} vs mes anterior`}    icon={CircleCheckBig} color="emerald"       areaData={evolucion} />
-          <StatCard title="Recuperación del mes" value={formatCOPCompact(stats.recuperacionMes ?? 0)}  trend={`${stats.tendencias?.recuperacionMes ?? '+0%'} vs mes anterior`} icon={BarChart3}      color="indigo"        areaData={evolucion} />
+          <StatCard title="Cartera total"        value={formatMillones(stats.carteraTotal ?? 0)}     trend={`${stats.tendencias?.carteraTotal ?? '+0%'} vs mes anterior`}    icon={Landmark}       color="blue"          areaData={evolucionFiltrada} />
+          <StatCard title="Cartera vencida"      value={formatMillones(stats.carteraVencida ?? 0)}   trend={`${stats.tendencias?.carteraVencida ?? '+0%'} vs mes anterior`}  icon={AlertCircle}    color="purple"  isBadTrend areaData={evolucionFiltrada} />
+          <StatCard title="Cartera al día"       value={formatMillones(stats.carteraAlDia ?? 0)}     trend={`${stats.tendencias?.carteraAlDia ?? '+0%'} vs mes anterior`}    icon={CircleCheckBig} color="emerald"       areaData={evolucionFiltrada} />
+          <StatCard title="Recuperación del mes" value={formatMillones(stats.recuperacionMes ?? 0)}  trend={`${stats.tendencias?.recuperacionMes ?? '+0%'} vs mes anterior`} icon={BarChart3}      color="indigo"        areaData={evolucionFiltrada} />
         </div>
       )}
 
@@ -139,9 +151,6 @@ export function Dashboard() {
               <h3 className="text-sm font-bold">Distribución de cartera</h3>
               <Info size={14} className="text-slate-400" />
             </div>
-            <button className="flex items-center gap-2 text-xs font-semibold text-slate-500 bg-white border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors">
-              Último corte <ChevronDown size={14} />
-            </button>
           </div>
 
           <div className="space-y-5">
@@ -166,8 +175,8 @@ export function Dashboard() {
                       <div className="h-full rounded-full" style={{ width: `${porcentaje}%`, backgroundColor: s.bar }} />
                     </div>
                   </div>
-                  <span className="text-xs font-bold text-slate-700 shrink-0 w-32 text-right" title={formatCOP(monto)}>
-                    {formatCOPCompact(monto)}
+                  <span className="text-xs font-bold text-slate-700 shrink-0 w-32 text-right" title={formatMillones(monto)}>
+                    {formatMillones(monto)}
                   </span>
                   <div className={`px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 w-14 text-center ${s.badgeBg} ${s.badgeText}`}>
                     {formatPorcentaje(porcentaje)}
@@ -185,7 +194,7 @@ export function Dashboard() {
                 </div>
                 <div>
                   <p className="text-[10px] text-slate-400 font-medium">Cartera total</p>
-                  <p className="text-sm font-bold text-slate-800">{formatCOP(stats.carteraTotal ?? 0)}</p>
+                  <p className="text-sm font-bold text-slate-800">{formatMillones(stats.carteraTotal ?? 0)}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -204,131 +213,72 @@ export function Dashboard() {
         <div className="lg:col-span-12 xl:col-span-7 glass-card rounded-3xl p-8">
           <div className="flex items-center justify-between mb-8">
             <h3 className="text-sm font-bold">Evolución de recuperación</h3>
-            <div className="flex items-center gap-2 text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-200 transition-colors">
-              Últimos 12 meses <ChevronDown size={14} />
+            <div className="relative">
+              <select
+                value={evolucionMeses}
+                onChange={(e) => setEvolucionMeses(Number(e.target.value) as EvolucionMeses)}
+                className="appearance-none pr-8 pl-3 py-1.5 text-xs font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-200 transition-colors focus:outline-none focus:ring-2 focus:ring-[#00e5ff]/30"
+              >
+                <option value={12}>Últimos 12 meses</option>
+                <option value={6}>Últimos 6 meses</option>
+                <option value={3}>Últimos 3 meses</option>
+              </select>
+              <ChevronDown
+                size={14}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"
+              />
             </div>
           </div>
           <div className="h-[260px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={evolucion}>
-                <defs>
-                  <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#00e5ff" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#00e5ff" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis
-                  dataKey="fecha"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }}
-                  tickFormatter={formatFechaCorta}
-                  dy={10}
-                />
-                <YAxis
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }}
-                  tickFormatter={(v: number) => formatCOPCompact(v)}
-                />
-                <Tooltip
-                  contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
-                  labelStyle={{ fontWeight: 'bold' }}
-                  labelFormatter={(label) => formatFechaCorta(String(label))}
-                  formatter={(value) => [formatCOP(Number(value)), 'Recuperado']}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="valor"
-                  stroke="#00e5ff"
-                  strokeWidth={3}
-                  fillOpacity={1}
-                  fill="url(#colorValue)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="lg:col-span-2 glass-card rounded-3xl p-8">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-2">
-              <h3 className="text-base font-bold text-slate-800">Riesgo de deserción (IA)</h3>
-              <Info size={15} className="text-slate-400" />
-            </div>
-            <button className="flex items-center gap-2 text-xs font-semibold text-slate-600 border border-slate-200 rounded-xl px-3 py-1.5 hover:border-slate-300 transition-colors">
-              <CalendarDays size={13} /> Este mes <ChevronDown size={13} />
-            </button>
-          </div>
-
-          {riesgo && <RiesgoBody riesgo={riesgo} />}
-
-          <div className="border-t border-slate-100 my-6" />
-
-          {riesgo && (
-            <div className="grid grid-cols-3 gap-4 mb-5">
-              <BottomStat
-                label="Total monitoreados"
-                value={formatNumber(riesgo.totalMonitoreados ?? 0)}
-                sub="Créditos en el último corte"
-                Icon={Users}
-                iconBg="bg-blue-50"
-                iconColor="text-blue-500"
-                valueColor="text-slate-900"
-              />
-              <BottomStat
-                label="% Alto riesgo"
-                value={formatPorcentaje(riesgo.altoRiesgo?.porcentaje ?? 0)}
-                sub={`${riesgo.altoRiesgo?.tendencia ?? '+0%'} vs corte anteriorr`}
-                Icon={TrendingUp}
-                iconBg="bg-red-50"
-                iconColor="text-red-500"
-                valueColor={(riesgo.altoRiesgo?.tendencia ?? '').startsWith('+') ? 'text-red-500' : 'text-emerald-500'}
-              />
-              <BottomStat
-                label="% Bajo riesgo"
-                value={formatPorcentaje(riesgo.bajoRiesgo?.porcentaje ?? 0)}
-                sub={`${riesgo.bajoRiesgo?.tendencia ?? '+0%'} vs corte anterior`}
-                Icon={ShieldCheck}
-                iconBg="bg-emerald-50"
-                iconColor="text-emerald-500"
-                valueColor="text-emerald-500"
-              />
-            </div>
-          )}
-
-          <button className="w-full flex items-center justify-center gap-2 border border-[#006875] text-[#006875] rounded-2xl py-3 text-sm font-bold hover:bg-[#006875] hover:text-white transition-all">
-            Ver estudiantes críticos <ChevronRight size={15} />
-          </button>
-        </div>
-
-        <div className="lg:col-span-1 flex flex-col gap-6">
-          <div className="flex-1 bg-gradient-to-br from-indigo-900 to-navy-dark rounded-3xl p-8 relative overflow-hidden flex flex-col">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-[#00e5ff]/10 blur-3xl -mr-12 -mt-12" />
-            <div className="relative z-10">
-              <div className="flex items-center gap-2 text-[#00e5ff] font-bold text-xs mb-4 uppercase tracking-widest">
-                Insight ✨
+            {evolucionFiltrada.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-xs font-medium text-slate-400">
+                Aún no hay datos de recuperación disponibles.
               </div>
-              <p className="text-white text-[13px] leading-relaxed mb-6 font-medium">
-                {riesgo
-                  ? ((riesgo.altoRiesgo?.tendencia ?? '').startsWith('+')
-                      ? `El alto riesgo subió ${riesgo.altoRiesgo?.tendencia ?? '+0%'} respecto al corte anterior: ${formatNumber(riesgo.altoRiesgo?.cantidad ?? 0)} créditos requieren atención prioritaria.`
-                      : `El alto riesgo bajó ${riesgo.altoRiesgo?.tendencia ?? '+0%'}: ${formatNumber(riesgo.altoRiesgo?.cantidad ?? 0)} créditos siguen requiriendo seguimiento.`)
-                  : 'Aún no hay datos de riesgo disponibles para generar un insight.'}
-              </p>
-              <button className="bg-[#00e5ff]/20 text-[#00e5ff] border border-[#00e5ff]/30 px-4 py-2 rounded-xl text-[11px] font-bold hover:bg-[#00e5ff] hover:text-navy-dark transition-all">
-                Ver recomendación
-              </button>
-            </div>
-            <div className="mt-auto flex justify-end">
-              <img src="/AURA_1.png" alt="AURA" className="w-24 h-24 object-contain drop-shadow-xl animate-float" />
-            </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={evolucionFiltrada}>
+                  <defs>
+                    <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis
+                    dataKey="fecha"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }}
+                    tickFormatter={formatFechaCorta}
+                    dy={10}
+                  />
+                  <YAxis
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }}
+                    tickFormatter={(v: number) => formatMillones(v)}
+                  />
+                  <Tooltip
+                    contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
+                    labelStyle={{ fontWeight: 'bold' }}
+                    labelFormatter={(label) => formatFechaCorta(String(label))}
+                    formatter={(value) => [formatMillones(Number(value)), 'Recuperado']}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="valor"
+                    stroke="#6366f1"
+                    strokeWidth={3}
+                    fillOpacity={1}
+                    fill="url(#colorValue)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       </div>
+
     </div>
   );
 }
@@ -375,109 +325,6 @@ function StatCard({ title, value, trend, icon: Icon, color, isBadTrend, areaData
             : <TrendingUp size={14} className="text-emerald-500" />}
           <span className={`text-[10px] font-bold ${isBadTrend ? 'text-red-400' : 'text-emerald-500'}`}>{trend}</span>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function RiesgoBody({ riesgo }: { riesgo: RiesgoDesercion }) {
-  const alto  = riesgo?.altoRiesgo  ?? { cantidad: 0, porcentaje: 0, tendencia: '+0%' };
-  const medio = riesgo?.medioRiesgo ?? { cantidad: 0, porcentaje: 0, tendencia: '+0%' };
-  const bajo  = riesgo?.bajoRiesgo  ?? { cantidad: 0, porcentaje: 0, tendencia: '+0%' };
-  const totalMonitoreados = riesgo?.totalMonitoreados ?? 0;
-
-  const riskChartData = [
-    { name: 'Alto',  value: alto.cantidad,  color: '#a78bfa' },
-    { name: 'Medio', value: medio.cantidad, color: '#818cf8' },
-    { name: 'Bajo',  value: bajo.cantidad,  color: '#34d399' },
-  ];
-
-  const niveles = [
-    {
-      label: 'Alto riesgo',  desc: 'Mora > 120 días (calificación E)',
-      nivel: alto, Icon: AlertTriangle,
-      iconBg: 'bg-violet-50', iconColor: 'text-violet-500',
-    },
-    {
-      label: 'Riesgo medio', desc: 'Mora 31-120 días (C, D)',
-      nivel: medio, Icon: Users,
-      iconBg: 'bg-blue-50', iconColor: 'text-blue-500',
-    },
-    {
-      label: 'Riesgo bajo',  desc: 'Al día o mora ≤ 30 días (A, B)',
-      nivel: bajo, Icon: ShieldCheck,
-      iconBg: 'bg-emerald-50', iconColor: 'text-emerald-500',
-    },
-  ];
-
-  return (
-    <div className="flex gap-8 items-center">
-      <div className="relative w-56 h-56 shrink-0">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={riskChartData} cx="50%" cy="50%" innerRadius={58} outerRadius={88}
-              dataKey="value" startAngle={90} endAngle={-270} paddingAngle={3} strokeWidth={0}
-            >
-              {riskChartData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-            </Pie>
-          </PieChart>
-        </ResponsiveContainer>
-        <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none">
-          <Users size={18} className="text-slate-400 mb-1" />
-          <span className="text-2xl font-bold text-slate-900 leading-none">{formatNumber(totalMonitoreados)}</span>
-          <span className="text-[8px] font-bold uppercase tracking-widest text-slate-400 mt-0.5 leading-tight">Créditos<br/>monitoreados</span>
-        </div>
-      </div>
-
-      <div className="flex-1 flex flex-col gap-4">
-        {niveles.map((r) => {
-          const tendencia = r.nivel?.tendencia ?? '+0%';
-          const isUp = tendencia.startsWith('+');
-          const TrendIcon = isUp ? TrendingUp : TrendingDown;
-          const trendColor = isUp ? 'text-red-500' : 'text-emerald-500';
-          return (
-            <div key={r.label} className="flex items-center gap-3">
-              <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${r.iconBg}`}>
-                <r.Icon size={16} className={r.iconColor} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-slate-800">{r.label}</p>
-                <p className="text-[10px] text-slate-400 truncate">{r.desc}</p>
-              </div>
-              <div className="text-right shrink-0">
-                <p className="text-sm font-bold text-slate-900">
-                  {formatNumber(r.nivel?.cantidad ?? 0)}{' '}
-                  <span className="text-slate-400 font-semibold text-xs">({formatPorcentaje(r.nivel?.porcentaje ?? 0)})</span>
-                </p>
-                <div className={`flex items-center justify-end gap-0.5 text-[10px] font-bold ${trendColor}`}>
-                  <TrendIcon size={10} /> {tendencia}
-                  <span className="text-slate-400 font-normal ml-0.5">vs corte ant.</span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-interface BottomStatProps {
-  label: string; value: string; sub: string;
-  Icon: typeof Users;
-  iconBg: string; iconColor: string; valueColor: string;
-}
-function BottomStat({ label, value, sub, Icon, iconBg, iconColor, valueColor }: BottomStatProps) {
-  return (
-    <div className="flex items-start gap-3">
-      <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${iconBg}`}>
-        <Icon size={14} className={iconColor} />
-      </div>
-      <div>
-        <p className="text-[9px] text-slate-400 font-semibold uppercase tracking-widest leading-tight">{label}</p>
-        <p className={`text-sm font-bold ${valueColor}`}>{value}</p>
-        <p className="text-[9px] text-slate-400">{sub}</p>
       </div>
     </div>
   );

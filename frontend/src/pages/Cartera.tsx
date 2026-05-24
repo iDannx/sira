@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { clsx } from 'clsx';
 import {
-  Search, Filter, Download, ChevronLeft, ChevronRight, ArrowUpDown,
+  Search, Filter, ChevronLeft, ChevronRight, ArrowUpDown,
   ArrowUp, ArrowDown, X, Phone, Mail, Calendar, TrendingDown,
   ShieldCheck, AlertTriangle, TrendingUp, Sparkles, FileText, Plus,
-  CircleCheckBig, BarChart3, Landmark, AlertCircle, Eye, Loader2, RefreshCw,
+  CircleCheckBig, BarChart3, Landmark, AlertCircle, Loader2, RefreshCw,
 } from 'lucide-react';
 import {
   getResumenCartera,
@@ -24,16 +24,19 @@ import type {
 } from '../data/carteraMock';
 
 // ── Helpers ──────────────────────────────────────────────
-const formatCOP = (v: number) =>
-  new Intl.NumberFormat('es-CO', {
-    style: 'currency', currency: 'COP', maximumFractionDigits: 0,
-  }).format(v);
-
-const formatCOPCompact = (v: number) => {
-  if (v >= 1_000_000_000) return `$${(v / 1_000_000_000).toFixed(1)} MM`;
-  if (v >= 1_000_000)     return `$${(v / 1_000_000).toFixed(1)} M`;
-  if (v >= 1_000)         return `$${(v / 1_000).toFixed(0)} K`;
-  return formatCOP(v);
+// Formato uniforme en millones para todos los montos de Cartera.
+// Ej: 1.234.567.890 → "$1.234M" · 865.000.000 → "$865M" · 1.500.000 → "$1,50M".
+const MILLONES_FORMATTER_INT  = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const MILLONES_FORMATTER_DEC1 = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const MILLONES_FORMATTER_DEC2 = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const formatMillones = (value: number | null | undefined): string => {
+  if (value == null || !Number.isFinite(value)) return '$0M';
+  const m = value / 1_000_000;
+  const abs = Math.abs(m);
+  const fmt = abs >= 100 ? MILLONES_FORMATTER_INT
+            : abs >= 10  ? MILLONES_FORMATTER_DEC1
+                         : MILLONES_FORMATTER_DEC2;
+  return `$${fmt.format(m)}M`;
 };
 
 const formatFecha = (iso: string | null | undefined) => {
@@ -139,17 +142,6 @@ export function Cartera() {
     setPage(1);
   };
 
-  const handleExportar = () => {
-    const qs = new URLSearchParams();
-    if (params.search)    qs.set('search', params.search);
-    if (params.riesgo)    qs.set('riesgo', params.riesgo);
-    if (params.estado)    qs.set('estado', params.estado);
-    if (params.rangoMora) qs.set('rangoMora', params.rangoMora);
-    if (params.sortBy)    qs.set('sortBy', params.sortBy);
-    if (params.sortDir)   qs.set('sortDir', params.sortDir);
-    window.open(`/api/cartera/exportar?${qs.toString()}`, '_blank');
-  };
-
   const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
 
@@ -161,30 +153,21 @@ export function Cartera() {
 
   return (
     <div className="space-y-8 pb-12">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <h2 className="text-3xl font-bold tracking-tight text-navy-dark">Cartera</h2>
-            <Landmark className="text-[#006875] w-5 h-5" />
-          </div>
-          <p className="text-slate-500 text-sm font-medium">
-            Última actualización: <span className="font-semibold text-slate-700">{ultimaActualizacion}</span>
-          </p>
+      <header>
+        <div className="flex items-center gap-2 mb-1">
+          <h2 className="text-3xl font-bold tracking-tight text-navy-dark">Cartera</h2>
+          <Landmark className="text-[#006875] w-5 h-5" />
         </div>
-        <button
-          onClick={handleExportar}
-          className="flex items-center gap-2 bg-[#006875] text-white px-6 py-3 rounded-xl font-bold shadow-lg hover:bg-[#004f58] transition-all"
-        >
-          <Download size={18} />
-          <span>Exportar</span>
-        </button>
+        <p className="text-slate-500 text-sm font-medium">
+          Última actualización: <span className="font-semibold text-slate-700">{ultimaActualizacion}</span>
+        </p>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KpiCard title="Total cartera"    value={formatCOPCompact(resumen?.total ?? 0)}         trend={resumen?.tendencias.total ?? '—'}         Icon={Landmark}       color="blue"    />
-        <KpiCard title="Cartera vencida"  value={formatCOPCompact(resumen?.vencida ?? 0)}       trend={resumen?.tendencias.vencida ?? '—'}       Icon={AlertCircle}    color="purple"  isBadTrend />
-        <KpiCard title="Cartera al día"   value={formatCOPCompact(resumen?.alDia ?? 0)}         trend={resumen?.tendencias.alDia ?? '—'}         Icon={CircleCheckBig} color="emerald" />
-        <KpiCard title="Recuperado (mes)" value={formatCOPCompact(resumen?.recuperadoMes ?? 0)} trend={resumen?.tendencias.recuperadoMes ?? '—'} Icon={BarChart3}      color="indigo"  />
+        <KpiCard title="Total cartera"    value={formatMillones(resumen?.total ?? 0)}         trend={resumen?.tendencias.total ?? '—'}         Icon={Landmark}       color="blue"    />
+        <KpiCard title="Cartera vencida"  value={formatMillones(resumen?.vencida ?? 0)}       trend={resumen?.tendencias.vencida ?? '—'}       Icon={AlertCircle}    color="purple"  isBadTrend />
+        <KpiCard title="Cartera al día"   value={formatMillones(resumen?.alDia ?? 0)}         trend={resumen?.tendencias.alDia ?? '—'}         Icon={CircleCheckBig} color="emerald" />
+        <KpiCard title="Recuperado (mes)" value={formatMillones(resumen?.recuperadoMes ?? 0)} trend={resumen?.tendencias.recuperadoMes ?? '—'} Icon={BarChart3}      color="indigo"  />
       </div>
 
       <div className="glass-card rounded-3xl p-6 space-y-5">
@@ -254,19 +237,18 @@ export function Cartera() {
                 <Th label="Último pago"  sortKey="ultimoPago" current={sortKey} dir={sortDir} onSort={handleSort} />
                 <Th label="Riesgo"       sortKey="riesgo"     current={sortKey} dir={sortDir} onSort={handleSort} />
                 <Th label="Estado"       sortKey="estado"     current={sortKey} dir={sortDir} onSort={handleSort} />
-                <th className="px-5 py-4 font-bold text-right">Acción</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50 bg-white">
               {loading ? (
-                <tr><td colSpan={7} className="text-center py-16">
+                <tr><td colSpan={6} className="text-center py-16">
                   <div className="inline-flex flex-col items-center gap-2 text-slate-400">
                     <Loader2 size={24} className="animate-spin" />
                     <p className="text-xs font-medium">Cargando cartera...</p>
                   </div>
                 </td></tr>
               ) : error ? (
-                <tr><td colSpan={7} className="text-center py-16">
+                <tr><td colSpan={6} className="text-center py-16">
                   <div className="inline-flex flex-col items-center gap-3 text-center">
                     <AlertCircle size={24} className="text-red-500" />
                     <p className="text-xs font-bold text-navy-dark">No se pudo cargar la cartera</p>
@@ -278,22 +260,26 @@ export function Cartera() {
                 </td></tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-16 text-slate-400 text-sm font-medium">
+                  <td colSpan={6} className="text-center py-16 text-slate-400 text-sm font-medium">
                     No hay clientes que coincidan con los filtros.
                   </td>
                 </tr>
               ) : (
                 items.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50/60 transition-colors">
+                  <tr
+                    key={c.id}
+                    onClick={() => setSelectedId(c.id)}
+                    className="hover:bg-slate-50/60 transition-colors cursor-pointer"
+                  >
                     <td className="px-5 py-4">
                       <p className="text-xs font-bold text-navy-dark">{c.nombre}</p>
                       <p className="text-[10px] text-slate-400 font-medium">{c.id}</p>
                     </td>
                     <td className="px-5 py-4 text-right text-xs font-bold text-navy-dark">
-                      {formatCOP(c.deudaTotal)}
+                      {formatMillones(c.deudaTotal)}
                     </td>
                     <td className={clsx('px-5 py-4 text-right text-xs font-bold', moraColor(c.diasMora))}>
-                      {c.diasMora === 0 ? '—' : `${c.diasMora}d`}
+                      {c.diasMora === 0 ? '—' : c.diasMora}
                     </td>
                     <td className="px-5 py-4 text-[11px] text-slate-600 font-medium">
                       {formatFecha(c.ultimoPago)}
@@ -307,14 +293,6 @@ export function Cartera() {
                       <span className={clsx('px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest', ESTADO_BADGE[c.estado])}>
                         {c.estado}
                       </span>
-                    </td>
-                    <td className="px-5 py-4 text-right">
-                      <button
-                        onClick={() => setSelectedId(c.id)}
-                        className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#006875] hover:bg-[#006875]/10 px-3 py-1.5 rounded-lg transition-colors"
-                      >
-                        <Eye size={13} /> Ver detalle
-                      </button>
                     </td>
                   </tr>
                 ))
@@ -570,7 +548,7 @@ function ClienteDrawer({
 
             <Section title="Estado de cartera">
               <div className="grid grid-cols-2 gap-3 mb-4">
-                <Stat label="Monto adeudado" value={formatCOP(cliente.deudaTotal)} valueClass="text-navy-dark" />
+                <Stat label="Monto adeudado" value={formatMillones(cliente.deudaTotal)} valueClass="text-navy-dark" />
                 <Stat
                   label="Días de mora"
                   value={cliente.diasMora === 0 ? 'Sin mora' : `${cliente.diasMora} días`}
@@ -585,7 +563,7 @@ function ClienteDrawer({
                   {cliente.ultimosPagos.map((p, i) => (
                     <li key={i} className="flex items-center justify-between px-4 py-2.5 text-xs">
                       <span className="text-slate-500 font-medium">{formatFecha(p.fecha)}</span>
-                      <span className="font-bold text-navy-dark">{formatCOP(p.monto)}</span>
+                      <span className="font-bold text-navy-dark">{formatMillones(p.monto)}</span>
                     </li>
                   ))}
                 </ul>
@@ -616,7 +594,7 @@ function ClienteDrawer({
                 {cliente.productos.map((p, i) => (
                   <li key={i} className="flex items-center justify-between px-4 py-3 rounded-2xl border border-slate-100 text-xs">
                     <span className="font-bold text-navy-dark">{p.tipo}</span>
-                    <span className="font-bold text-slate-600">{formatCOP(p.monto)}</span>
+                    <span className="font-bold text-slate-600">{formatMillones(p.monto)}</span>
                   </li>
                 ))}
               </ul>
