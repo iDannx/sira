@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "PowerShell($conn = Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if \\($conn\\) { Get-CimInstance Win32_Process -Filter \"ProcessId=$\\($conn.OwningProcess\\)\" | Select-Object ProcessId, CommandLine | Format-List })",
-      "PowerShell(Stop-Process -Id 7416,16576,19708 -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; Get-NetTCPConnection -State Listen | Where-Object { $_.LocalPort -in 3001,3004,5173 } | Select-Object LocalPort, OwningProcess | Format-Table)"
+      "PowerShell(Stop-Process -Id 7416,16576,19708 -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; Get-NetTCPConnection -State Listen | Where-Object { $_.LocalPort -in 3001,3004,5173 } | Select-Object LocalPort, OwningProcess | Format-Table)",
+      "Bash(npx tsc *)"
     ]
   }
 }

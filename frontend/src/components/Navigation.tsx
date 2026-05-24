@@ -70,23 +70,7 @@ export function Sidebar() {
       </nav>
 
       <div className="p-4 mt-auto">
-        <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
-          <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-3">Resumen del día</p>
-          <div className="space-y-3">
-            {[
-              { label: 'Estudiantes contactados', val: '—' },
-              { label: 'Acuerdos creados', val: '—' },
-              { label: 'Recuperación del día', val: '—' },
-            ].map((i) => (
-              <div key={i.label} className="flex justify-between items-center text-[11px]">
-                <span className="text-slate-400">{i.label}</span>
-                <span className="text-slate-800 font-semibold">{i.val}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-6 flex items-center gap-3 px-2">
+        <div className="flex items-center gap-3 px-2">
           <AvatarCircle name={user?.name} size="md" />
           <div className="flex-1 overflow-hidden">
             <p className="text-xs font-semibold text-slate-800 truncate">{user?.name ?? 'Invitado'}</p>

@@ -12,12 +12,6 @@ export function LandingPage() {
             <img src="/Logo_SIRA_Light.png" alt="SIRA" className="h-24 w-auto object-contain" />
           </div>
 
-          <div className="hidden md:flex items-center gap-10">
-            {['Inicio', 'Funcionalidades', 'Nosotros', 'Precios'].map((item) => (
-              <a key={item} href="#" className="text-sm font-medium text-slate-500 hover:text-navy-dark transition-colors">{item}</a>
-            ))}
-          </div>
-
           <div className="flex items-center gap-4">
             <Link to="/login" className="text-sm font-bold text-slate-700 px-6 py-2">Log In</Link>
             <Link to="/login" className="btn-primary shadow-xl">Agendar Demo</Link>

@@ -22,6 +22,7 @@ import openfinanceRoutes from './routes/openfinance.routes';
 import estrategiasRoutes from './routes/estrategias.routes';
 import gestionesRoutes from './routes/gestiones.routes';
 import reportesRoutes from './routes/reportes.routes';
+import campanasRoutes from './routes/campanas.routes';
 
 const app = express();
 
@@ -51,6 +52,7 @@ app.use('/api/openfinance', authenticate, openfinanceRoutes);
 app.use('/api/estrategias', authenticate, estrategiasRoutes);
 app.use('/api/gestiones', authenticate, gestionesRoutes);
 app.use('/api/reportes', authenticate, reportesRoutes);
+app.use('/api/campanas', authenticate, campanasRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({
