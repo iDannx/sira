@@ -20,6 +20,8 @@ import automatizacionesRoutes from './routes/automatizaciones.routes';
 import prediccionRoutes from './routes/prediccion.routes';
 import openfinanceRoutes from './routes/openfinance.routes';
 import estrategiasRoutes from './routes/estrategias.routes';
+import gestionesRoutes from './routes/gestiones.routes';
+import reportesRoutes from './routes/reportes.routes';
 
 const app = express();
 
@@ -47,6 +49,8 @@ app.use('/api/automatizaciones', authenticate, automatizacionesRoutes);
 app.use('/api/prediccion', authenticate, prediccionRoutes);
 app.use('/api/openfinance', authenticate, openfinanceRoutes);
 app.use('/api/estrategias', authenticate, estrategiasRoutes);
+app.use('/api/gestiones', authenticate, gestionesRoutes);
+app.use('/api/reportes', authenticate, reportesRoutes);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({
