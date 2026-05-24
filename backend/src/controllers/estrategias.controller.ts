@@ -186,6 +186,7 @@ export const getPerfilamiento = async (req: Request, res: Response, next: NextFu
         afinidad,
         nivelAfinidad,
         estrategia,
+        fechaGeneracion: new Date().toISOString().split('T')[0],
       };
     });
 
@@ -376,6 +377,7 @@ export const getRecuperacion = async (req: Request, res: Response, next: NextFun
         saldoCapital: Math.round(saldoCapital),
         estadoJuridico: row.estado_juridico,
         estrategia,
+        fechaGeneracion: new Date().toISOString().split('T')[0],
       };
     });
 
