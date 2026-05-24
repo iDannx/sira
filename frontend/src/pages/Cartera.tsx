@@ -46,12 +46,6 @@ const formatFecha = (iso: string | null | undefined) => {
   return d.toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
-const RIESGO_BADGE: Record<NivelRiesgo, string> = {
-  Bajo:  'bg-emerald-50 text-emerald-600',
-  Medio: 'bg-amber-50 text-amber-600',
-  Alto:  'bg-red-50 text-red-600',
-};
-
 const ESTADO_BADGE: Record<EstadoCartera, string> = {
   'Al día':    'bg-emerald-50 text-emerald-600',
   'En mora':   'bg-amber-50 text-amber-600',
@@ -74,7 +68,6 @@ const PAGE_SIZE = 10;
 // ── Componente principal ─────────────────────────────────
 export function Cartera() {
   const [search, setSearch] = useState('');
-  const [riesgoFiltro, setRiesgoFiltro] = useState<'todos' | NivelRiesgo>('todos');
   const [estadoFiltro, setEstadoFiltro] = useState<'todos' | EstadoCartera>('todos');
   const [moraFiltro, setMoraFiltro] = useState<RangoMora>('todos');
   const [sortKey, setSortKey] = useState<SortKey>('diasMora');
@@ -99,12 +92,11 @@ export function Cartera() {
     page,
     limit: PAGE_SIZE,
     search: searchDebounced || undefined,
-    riesgo: riesgoFiltro === 'todos' ? undefined : riesgoFiltro,
     estado: estadoFiltro === 'todos' ? undefined : estadoFiltro,
     rangoMora: moraFiltro === 'todos' ? undefined : moraFiltro,
     sortBy: sortKey,
     sortDir,
-  }), [page, searchDebounced, riesgoFiltro, estadoFiltro, moraFiltro, sortKey, sortDir]);
+  }), [page, searchDebounced, estadoFiltro, moraFiltro, sortKey, sortDir]);
 
   const load = async () => {
     setLoading(true);
@@ -136,7 +128,6 @@ export function Cartera() {
 
   const handleLimpiar = () => {
     setSearch('');
-    setRiesgoFiltro('todos');
     setEstadoFiltro('todos');
     setMoraFiltro('todos');
     setPage(1);
@@ -163,11 +154,13 @@ export function Cartera() {
         </p>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KpiCard title="Total cartera"    value={formatMillones(resumen?.total ?? 0)}         trend={resumen?.tendencias.total ?? '—'}         Icon={Landmark}       color="blue"    />
-        <KpiCard title="Cartera vencida"  value={formatMillones(resumen?.vencida ?? 0)}       trend={resumen?.tendencias.vencida ?? '—'}       Icon={AlertCircle}    color="purple"  isBadTrend />
-        <KpiCard title="Cartera al día"   value={formatMillones(resumen?.alDia ?? 0)}         trend={resumen?.tendencias.alDia ?? '—'}         Icon={CircleCheckBig} color="emerald" />
-        <KpiCard title="Recuperado (mes)" value={formatMillones(resumen?.recuperadoMes ?? 0)} trend={resumen?.tendencias.recuperadoMes ?? '—'} Icon={BarChart3}      color="indigo"  />
+      <div className="glass-card rounded-3xl p-8">
+        <h3 className="text-2xl font-bold tracking-tight text-navy-dark mb-2">
+          Explora tu cartera en detalle
+        </h3>
+        <p className="text-sm font-medium text-slate-500">
+          Consulta el estado individual de cada crédito, filtra por estado de riesgo y días de mora.
+        </p>
       </div>
 
       <div className="glass-card rounded-3xl p-6 space-y-5">
@@ -184,17 +177,6 @@ export function Cartera() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <FilterSelect
-              label="Riesgo"
-              value={riesgoFiltro}
-              onChange={(v) => { setRiesgoFiltro(v as typeof riesgoFiltro); setPage(1); }}
-              options={[
-                { value: 'todos', label: 'Todos' },
-                { value: 'Bajo',  label: 'Bajo' },
-                { value: 'Medio', label: 'Medio' },
-                { value: 'Alto',  label: 'Alto' },
-              ]}
-            />
             <FilterSelect
               label="Estado"
               value={estadoFiltro}
@@ -235,20 +217,19 @@ export function Cartera() {
                 <Th label="Deuda total"  sortKey="deudaTotal" current={sortKey} dir={sortDir} onSort={handleSort} align="right" />
                 <Th label="Días mora"    sortKey="diasMora"   current={sortKey} dir={sortDir} onSort={handleSort} align="right" />
                 <Th label="Último pago"  sortKey="ultimoPago" current={sortKey} dir={sortDir} onSort={handleSort} />
-                <Th label="Riesgo"       sortKey="riesgo"     current={sortKey} dir={sortDir} onSort={handleSort} />
                 <Th label="Estado"       sortKey="estado"     current={sortKey} dir={sortDir} onSort={handleSort} />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50 bg-white">
               {loading ? (
-                <tr><td colSpan={6} className="text-center py-16">
+                <tr><td colSpan={5} className="text-center py-16">
                   <div className="inline-flex flex-col items-center gap-2 text-slate-400">
                     <Loader2 size={24} className="animate-spin" />
                     <p className="text-xs font-medium">Cargando cartera...</p>
                   </div>
                 </td></tr>
               ) : error ? (
-                <tr><td colSpan={6} className="text-center py-16">
+                <tr><td colSpan={5} className="text-center py-16">
                   <div className="inline-flex flex-col items-center gap-3 text-center">
                     <AlertCircle size={24} className="text-red-500" />
                     <p className="text-xs font-bold text-navy-dark">No se pudo cargar la cartera</p>
@@ -260,7 +241,7 @@ export function Cartera() {
                 </td></tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-16 text-slate-400 text-sm font-medium">
+                  <td colSpan={5} className="text-center py-16 text-slate-400 text-sm font-medium">
                     No hay clientes que coincidan con los filtros.
                   </td>
                 </tr>
@@ -283,11 +264,6 @@ export function Cartera() {
                     </td>
                     <td className="px-5 py-4 text-[11px] text-slate-600 font-medium">
                       {formatFecha(c.ultimoPago)}
-                    </td>
-                    <td className="px-5 py-4">
-                      <span className={clsx('px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest', RIESGO_BADGE[c.riesgo])}>
-                        {c.riesgo}
-                      </span>
                     </td>
                     <td className="px-5 py-4">
                       <span className={clsx('px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest', ESTADO_BADGE[c.estado])}>
@@ -341,39 +317,6 @@ export function Cartera() {
 }
 
 // ── Subcomponentes ───────────────────────────────────────
-interface KpiCardProps {
-  title: string; value: string; trend: string;
-  Icon: typeof Landmark;
-  color: 'blue' | 'indigo' | 'purple' | 'emerald';
-  isBadTrend?: boolean;
-}
-function KpiCard({ title, value, trend, Icon, color, isBadTrend }: KpiCardProps) {
-  const map: Record<string, { icon: string; value: string }> = {
-    blue:    { icon: 'bg-blue-50 text-blue-500',       value: 'text-blue-600' },
-    indigo:  { icon: 'bg-indigo-50 text-indigo-500',   value: 'text-indigo-600' },
-    purple:  { icon: 'bg-purple-50 text-purple-500',   value: 'text-purple-600' },
-    emerald: { icon: 'bg-emerald-50 text-emerald-500', value: 'text-emerald-600' },
-  };
-  const c = map[color] ?? map.blue;
-  return (
-    <div className="glass-card rounded-3xl p-6 relative overflow-hidden group">
-      <div className="flex items-start justify-between mb-4">
-        <div className={clsx('p-3 rounded-2xl shrink-0 transition-transform group-hover:scale-110', c.icon)}>
-          <Icon size={24} />
-        </div>
-      </div>
-      <p className="text-slate-400 text-[11px] font-bold uppercase tracking-widest leading-none mb-2">{title}</p>
-      <p className={clsx('text-2xl font-bold tracking-tight mb-1', c.value)}>{value}</p>
-      <div className="flex items-center gap-1.5">
-        {isBadTrend
-          ? <TrendingDown size={14} className="text-red-400" />
-          : <TrendingUp   size={14} className="text-emerald-500" />}
-        <span className={clsx('text-[10px] font-bold', isBadTrend ? 'text-red-400' : 'text-emerald-500')}>{trend}</span>
-      </div>
-    </div>
-  );
-}
-
 function FilterSelect({
   label, value, onChange, options,
 }: {

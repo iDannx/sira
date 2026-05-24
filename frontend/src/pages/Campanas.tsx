@@ -3,7 +3,7 @@ import { clsx } from 'clsx';
 import {
   Megaphone, Wand2, User as UserIcon, ToggleRight, ToggleLeft,
   Eye, Edit2, MoreHorizontal, X, Loader2, AlertCircle, RefreshCw,
-  Layers, Target, Activity, DollarSign, MessageSquare, Phone, Mail,
+  Layers, Target, MessageSquare, Phone, Mail,
   Send, Calendar, CheckCircle2, XCircle, Clock, Play, FileText,
   Filter, Search,
 } from 'lucide-react';
@@ -124,14 +124,13 @@ export function Campanas() {
   // KPIs derivados del listado
   const kpis = useMemo(() => {
     const total = items.length;
-    const activas = items.filter((c) => c.estado === 'ACTIVA').length;
     // Aproximación de tasa de contacto: % de campañas con última ejecución exitosa
     // (COMPLETADA) sobre las que han tenido ejecuciones. El cálculo real
     // requiere endpoint adicional cruzando gestiones + estrategias.
     const ejecutadas = items.filter((c) => c.ultimo_estado !== null);
     const exitosas = ejecutadas.filter((c) => c.ultimo_estado === 'COMPLETADA').length;
     const tasaContacto = ejecutadas.length === 0 ? 0 : (exitosas / ejecutadas.length) * 100;
-    return { total, activas, tasaContacto };
+    return { total, tasaContacto };
   }, [items]);
 
   const onToggle = async (c: CampanaListItem) => {
@@ -160,11 +159,9 @@ export function Campanas() {
         </div>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KpiCard title="Campañas totales"    value={String(kpis.total)}                  sub="en mcp_estrategias"     Icon={Layers}     color="indigo" />
-        <KpiCard title="Campañas activas"    value={String(kpis.activas)}                sub="en operación"           Icon={Activity}   color="emerald" />
-        <KpiCard title="Tasa de contacto"    value={`${kpis.tasaContacto.toFixed(0)}%`}  sub="última ejecución"       Icon={Target}     color="blue" />
-        <KpiCard title="Monto recuperado"    value="—"                                   sub="30 días · pendiente"    Icon={DollarSign} color="purple" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <KpiCard title="Campañas totales" value={String(kpis.total)}                 Icon={Layers} color="indigo" />
+        <KpiCard title="Tasa de contacto" value={`${kpis.tasaContacto.toFixed(0)}%`} Icon={Target} color="blue" />
       </div>
 
       <div className="glass-card rounded-3xl p-6 space-y-5">
@@ -340,11 +337,11 @@ export function Campanas() {
 
 // ── Subcomponentes ───────────────────────────────────────
 interface KpiCardProps {
-  title: string; value: string; sub: string;
+  title: string; value: string;
   Icon: typeof Layers;
   color: 'blue' | 'indigo' | 'purple' | 'emerald';
 }
-function KpiCard({ title, value, sub, Icon, color }: KpiCardProps) {
+function KpiCard({ title, value, Icon, color }: KpiCardProps) {
   const map: Record<string, { icon: string; value: string }> = {
     blue:    { icon: 'bg-blue-50 text-blue-500',       value: 'text-blue-600' },
     indigo:  { icon: 'bg-indigo-50 text-indigo-500',   value: 'text-indigo-600' },
@@ -353,15 +350,14 @@ function KpiCard({ title, value, sub, Icon, color }: KpiCardProps) {
   };
   const c = map[color] ?? map.blue;
   return (
-    <div className="glass-card rounded-3xl p-6 relative overflow-hidden group">
-      <div className="flex items-start justify-between mb-4">
-        <div className={clsx('p-3 rounded-2xl shrink-0 transition-transform group-hover:scale-110', c.icon)}>
-          <Icon size={24} />
-        </div>
+    <div className="glass-card rounded-3xl p-6 flex items-center gap-5 group">
+      <div className={clsx('p-3 rounded-2xl shrink-0 transition-transform group-hover:scale-110', c.icon)}>
+        <Icon size={24} />
       </div>
-      <p className="text-slate-400 text-[11px] font-bold uppercase tracking-widest leading-none mb-2">{title}</p>
-      <p className={clsx('text-2xl font-bold tracking-tight mb-1', c.value)}>{value}</p>
-      <p className="text-[10px] font-medium text-slate-400 mt-1">{sub}</p>
+      <div>
+        <p className="text-slate-400 text-[11px] font-bold uppercase tracking-widest leading-none mb-2">{title}</p>
+        <p className={clsx('text-2xl font-bold tracking-tight', c.value)}>{value}</p>
+      </div>
     </div>
   );
 }
