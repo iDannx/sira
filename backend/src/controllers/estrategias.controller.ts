@@ -52,8 +52,8 @@ interface PerfilamientoRow {
   calificacion: string;
   dias_mora: string | number | null;
   saldo_total: string | null;
-  score_comportamiento_pago: string | number | null;
-  capacidad_endeudamiento: string | null;
+  ingresos_mensuales: string | null;
+  egresos_mensuales: string | null;
 }
 
 const productoSugerido = (
@@ -68,20 +68,24 @@ const productoSugerido = (
   return 'Crédito de consumo';
 };
 
-const computeAfinidad = (
-  scoreComportamiento: number | null,
+// Afinidad calculada únicamente con datos internos (cartera + clientes).
+// El score base es 60; se suma por buena calificación, sin mora, capacidad
+// estimada > 1M / 2M y créditos significativos (> 5M desembolsado).
+const calcularAfinidad = (
+  ingresos: number,
+  egresos: number,
+  montoDesembolsado: number,
+  _plazoMeses: number,
   calificacion: string,
   diasMora: number,
-  capacidadEndeudamiento: number,
 ): number => {
   let score = 60;
-  if (scoreComportamiento !== null && scoreComportamiento > 0) {
-    score = Math.round(scoreComportamiento / 10);
-  } else {
-    if (calificacion === 'A') score += 20;
-    if (diasMora === 0) score += 10;
-    if (capacidadEndeudamiento > 2_000_000) score += 10;
-  }
+  if (calificacion === 'A') score += 15;
+  if (diasMora === 0) score += 10;
+  const capacidad = (ingresos - (egresos ?? 0)) * 0.3;
+  if (capacidad > 2_000_000) score += 10;
+  if (capacidad > 1_000_000) score += 5;
+  if (montoDesembolsado > 5_000_000) score += 5;
   return Math.min(100, Math.max(0, score));
 };
 
@@ -89,23 +93,6 @@ const toNivelAfinidad = (afinidad: number): NivelAfinidad => {
   if (afinidad >= 75) return 'Alto';
   if (afinidad >= 50) return 'Medio';
   return 'Bajo';
-};
-
-const buildPerfilDesc = (
-  scoreComportamiento: number | null,
-  saldoTotal: number,
-  capacidadEndeudamiento: number,
-  plazoMeses: number,
-): string => {
-  if (scoreComportamiento !== null && scoreComportamiento > 0) {
-    // % de la capacidad de endeudamiento ya comprometida con el saldo vigente.
-    const pct =
-      capacidadEndeudamiento > 0
-        ? Math.min(100, Math.round((saldoTotal / capacidadEndeudamiento) * 100))
-        : 0;
-    return `Score ${scoreComportamiento} · Endeudamiento ${pct}%`;
-  }
-  return `Calificación A · ${plazoMeses} meses sin mora`;
 };
 
 export const getPerfilamiento = async (req: Request, res: Response, next: NextFunction) => {
@@ -129,29 +116,29 @@ export const getPerfilamiento = async (req: Request, res: Response, next: NextFu
       );
     }
 
-    // El schema `openfinance` fue eliminado: ya no hay LEFT JOIN a
-    // `of_perfil_financiero`. Devolvemos NULL en las columnas que venían de
-    // ahí para preservar la forma de PerfilamientoRow; el mapeo JS cae al
-    // ramal "sin datos OF" de manera natural.
+    // Toda la afinidad y el perfil se derivan ahora de datos internos
+    // (cartera + clientes). Incluimos `cr.id_credito` aunque el spec no lo
+    // pide explícitamente, porque el frontend lo usa para llamar
+    // POST /api/estrategias/:id/aplicar.
     const sql = `
       SELECT
         cl.id_cliente,
         cr.id_credito,
         TRIM(COALESCE(cl.primer_nombre, '') || ' ' || COALESCE(cl.primer_apellido, '')) AS nombre,
         cr.tipo_credito,
-        cr.plazo_meses,
         cr.monto_desembolsado,
         cr.tasa_interes_ea,
+        cr.plazo_meses,
         c.calificacion,
         c.dias_mora,
         c.saldo_total,
-        NULL::numeric AS score_comportamiento_pago,
-        NULL::numeric AS capacidad_endeudamiento
+        cl.ingresos_mensuales,
+        cl.egresos_mensuales
       FROM cartera.cartera c
       JOIN cartera.creditos cr ON cr.id_credito = c.id_credito
       JOIN cartera.clientes cl ON cl.id_cliente = cr.id_cliente
       WHERE ${where.join(' AND ')}
-      ORDER BY c.saldo_total DESC NULLS LAST
+      ORDER BY cl.ingresos_mensuales DESC NULLS LAST
       LIMIT 50
     `;
 
@@ -160,21 +147,26 @@ export const getPerfilamiento = async (req: Request, res: Response, next: NextFu
     let data = rows.map((row, i) => {
       const tipoCredito = row.tipo_credito ?? 'CONSUMO';
       const saldoTotal = num(row.saldo_total);
-      const score =
-        row.score_comportamiento_pago !== null && row.score_comportamiento_pago !== undefined
-          ? num(row.score_comportamiento_pago)
-          : null;
-      const capacidad = num(row.capacidad_endeudamiento);
+      const ingresos = num(row.ingresos_mensuales);
+      const egresos = num(row.egresos_mensuales);
+      const montoDesembolsado = num(row.monto_desembolsado);
       const diasMora = num(row.dias_mora);
       const plazoMeses = num(row.plazo_meses);
+      // Capacidad estimada como el 30% del excedente mensual (ingresos - egresos).
+      const capacidad = Math.max(0, (ingresos - egresos) * 0.3);
 
       const producto = productoSugerido(tipoCredito, saldoTotal, capacidad);
-      const afinidad = computeAfinidad(score, row.calificacion, diasMora, capacidad);
+      const afinidad = calcularAfinidad(
+        ingresos,
+        egresos,
+        montoDesembolsado,
+        plazoMeses,
+        row.calificacion,
+        diasMora,
+      );
       const nivelAfinidad = toNivelAfinidad(afinidad);
-      const perfil = buildPerfilDesc(score, saldoTotal, capacidad, plazoMeses);
+      const perfil = `Calificación A · Ingresos $${formatCOP(ingresos)} · ${plazoMeses} meses de historial`;
 
-      // Sin schema openfinance, `capacidad` suele ser 0. Solo agregamos esa
-      // línea cuando tenemos un valor real para evitar "$0" en el texto.
       const capacidadLine =
         capacidad > 0 ? ` Capacidad de endeudamiento estimada: $${formatCOP(capacidad)}.` : '';
       const estrategia =
