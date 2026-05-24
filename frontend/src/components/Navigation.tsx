@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  LayoutDashboard, Wallet, Users, FileText, Settings, Rocket, Bell, Search,
-  HelpCircle, ChevronDown, Wand2, LogOut, UserCircle2,
+  LayoutDashboard, Wallet, FileText, Settings, Rocket, Bell, Search,
+  HelpCircle, ChevronDown, Wand2, LogOut, UserCircle2, Sparkles,
 } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -46,10 +46,10 @@ export function Sidebar() {
   const links = [
     { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
     { name: 'Cartera', icon: Wallet, to: '/cartera' },
-    { name: 'Estudiantes', icon: Users, to: '/estudiantes' },
     { name: 'Acuerdos', icon: FileText, to: '/acuerdos' },
     { name: 'Gestiones', icon: Rocket, to: '/gestiones' },
     { name: 'Predicción de riesgo', icon: Rocket, to: '/predictive-risk' },
+    { name: 'Estrategias', icon: Sparkles, to: '/estrategias' },
     { name: 'Automatizaciones', icon: Wand2, to: '/automations' },
     { name: 'Reportes', icon: FileText, to: '/reports' },
     { name: 'Configuración', icon: Settings, to: '/settings' },

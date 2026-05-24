@@ -191,22 +191,22 @@ export const getRiesgoDesercion = async (
     res.json({
       success: true,
       data: {
-        alto: {
+        altoRiesgo: {
           cantidad: alto,
           porcentaje: Number(((alto / total) * 100).toFixed(2)),
           tendencia: pct(alto, prev.alto),
         },
-        medio: {
+        medioRiesgo: {
           cantidad: medio,
           porcentaje: Number(((medio / total) * 100).toFixed(2)),
           tendencia: pct(medio, prev.medio),
         },
-        bajo: {
+        bajoRiesgo: {
           cantidad: bajo,
           porcentaje: Number(((bajo / total) * 100).toFixed(2)),
           tendencia: pct(bajo, prev.bajo),
         },
-        total: num(curr?.total),
+        totalMonitoreados: num(curr?.total),
         fechaCorte,
       },
     });

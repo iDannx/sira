@@ -3,6 +3,8 @@ import { MainLayout } from './layouts/MainLayout';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Dashboard } from './pages/Dashboard';
 import { Automations } from './pages/Automations';
+import { Cartera } from './pages/Cartera';
+import { Estrategias } from './pages/Estrategias';
 import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
 import { NotFound } from './pages/NotFound';
@@ -24,9 +26,9 @@ export default function App() {
 
         <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
         <Route path="/automations" element={<Protected><Automations /></Protected>} />
+        <Route path="/estrategias" element={<Protected><Estrategias /></Protected>} />
 
-        <Route path="/cartera" element={<Protected><PlaceholderPage title="Cartera" /></Protected>} />
-        <Route path="/estudiantes" element={<Protected><PlaceholderPage title="Estudiantes" /></Protected>} />
+        <Route path="/cartera" element={<Protected><Cartera /></Protected>} />
         <Route path="/acuerdos" element={<Protected><PlaceholderPage title="Acuerdos" /></Protected>} />
         <Route path="/gestiones" element={<Protected><PlaceholderPage title="Gestiones" /></Protected>} />
         <Route path="/predictive-risk" element={<Protected><PlaceholderPage title="Predicción de Riesgo" /></Protected>} />
