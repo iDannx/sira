@@ -78,7 +78,7 @@ export interface RiesgoDesercion {
   bajoRiesgo: NivelRiesgo;
 }
 
-// ── Automatizaciones ──────────────────────────────────
+// ── Campañas (mcp_estrategias) ────────────────────────
 export type AutomatizacionEstado = 'BORRADOR' | 'ACTIVA' | 'PAUSADA' | 'COMPLETADA';
 
 export interface AutomatizacionSegmento {
@@ -87,28 +87,4 @@ export interface AutomatizacionSegmento {
   saldo_min?: number;
   tipo_credito?: string[];
   estado_juridico?: string[];
-}
-
-export interface Automatizacion {
-  id: number;
-  nombre: string;
-  descripcion: string;
-  estado: AutomatizacionEstado;
-  creada_por: string;
-  segmento_config: AutomatizacionSegmento;
-  total_acciones: number;
-  ultima_ejecucion: string | null;
-  ultimo_estado: 'PENDIENTE' | 'EJECUTANDO' | 'COMPLETADA' | 'ERROR' | null;
-  created_at: string;
-}
-
-export interface AutomatizacionEjecucion {
-  id: number;
-  estrategia_id: number;
-  estado: 'COMPLETADA' | 'ERROR';
-  resultado: {
-    enviados: number;
-    errores: number;
-  };
-  created_at: string;
 }

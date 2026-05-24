@@ -2,7 +2,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { MainLayout } from './layouts/MainLayout';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Dashboard } from './pages/Dashboard';
-import { Automations } from './pages/Automations';
 import { Campanas } from './pages/Campanas';
 import { Cartera } from './pages/Cartera';
 import { Acuerdos } from './pages/Acuerdos';
@@ -26,7 +25,6 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
 
         <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
-        <Route path="/automations" element={<Protected><Automations /></Protected>} />
         <Route path="/campanas" element={<Protected><Campanas /></Protected>} />
 
         <Route path="/cartera" element={<Protected><Cartera /></Protected>} />
