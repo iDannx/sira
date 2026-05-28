@@ -12,7 +12,7 @@ const formatAcuerdoId = (id: number): string => `A-${String(id).padStart(4, '0')
 
 const parseAcuerdoId = (raw: string | undefined): number => {
   if (typeof raw !== 'string') throw badRequest('id inválido');
-  const m = /^A-(\d{1,10})$/.exec(raw);
+  const m = /^A-(\d{1,10})$/i.exec(raw);
   if (!m) throw badRequest('id debe tener formato A-XXXX');
   const id = Number(m[1]);
   if (!Number.isInteger(id) || id <= 0) throw badRequest('id inválido');
@@ -38,6 +38,15 @@ const fmtYmd = (v: unknown): string | null => {
   return s ? s.slice(0, 10) : null;
 };
 
+const fmtIso = (v: unknown): string | null => {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return null;
+    return v.toISOString();
+  }
+  return String(v);
+};
+
 const toDate = (v: unknown): Date | null => {
   if (v === null || v === undefined) return null;
   if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
@@ -51,32 +60,34 @@ const startOfDay = (d: Date): Date => {
   return r;
 };
 
-type EstadoAcuerdo = 'Vigente' | 'Cumplido' | 'Incumplido' | 'Vencido';
-type EstadoCuota = 'Pagada' | 'Pendiente' | 'Atrasada';
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-const getEstadoAcuerdo = (
-  fechaPromesa: Date | null,
-  valorPromesa: number,
-  totalPagado: number,
-): EstadoAcuerdo => {
-  if (valorPromesa > 0 && totalPagado >= valorPromesa) return 'Cumplido';
-  if (!fechaPromesa) return 'Vigente';
-  const hoy = startOfDay(new Date());
-  const fp = startOfDay(fechaPromesa);
-  const treintaAtras = new Date(hoy);
-  treintaAtras.setDate(treintaAtras.getDate() - 30);
-  if (fp < treintaAtras) return 'Vencido';
-  if (fp < hoy) return 'Incumplido';
-  return 'Vigente';
+// Enums DB → strings legibles del frontend. El enum `estado_acuerdo_enum`
+// solo tiene 3 valores: ACTIVO, CUMPLIDO, INCUMPLIDO.
+const ESTADO_DB_TO_UI: Record<string, 'Vigente' | 'Cumplido' | 'Incumplido'> = {
+  ACTIVO: 'Vigente',
+  CUMPLIDO: 'Cumplido',
+  INCUMPLIDO: 'Incumplido',
 };
+
+const getEstadoUi = (dbEstado: string | null): 'Vigente' | 'Cumplido' | 'Incumplido' =>
+  (dbEstado && ESTADO_DB_TO_UI[dbEstado]) || 'Vigente';
+
+const ESTADO_UI_TO_DB: Record<string, string> = {
+  Vigente: 'ACTIVO',
+  Cumplido: 'CUMPLIDO',
+  Incumplido: 'INCUMPLIDO',
+};
+
+const ESTADOS_DB_VALIDOS = ['ACTIVO', 'CUMPLIDO', 'INCUMPLIDO'] as const;
 
 const computeCumplimiento = (montoAcordado: number, totalPagado: number): number => {
   if (montoAcordado <= 0) return 0;
-  return Math.min(100, Math.round((totalPagado / montoAcordado) * 100));
+  return Math.min(100, Math.round((totalPagado * 100) / montoAcordado));
 };
 
 // =================================================================
-// Endpoint 1 — GET /api/acuerdos/resumen
+// GET /api/acuerdos/resumen
 // =================================================================
 
 interface ResumenRow {
@@ -88,29 +99,16 @@ interface ResumenRow {
 
 export const getResumen = async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    const sql = `
+    const { rows } = await query<ResumenRow>(`
       SELECT
-        COUNT(*) FILTER (
-          WHERE mc.resultado = 'promesa_pago'
-            AND mc.fecha_promesa >= CURRENT_DATE
-        )                                                          AS vigentes,
-        COUNT(*) FILTER (
-          WHERE mc.resultado = 'promesa_pago'
-            AND p.valor_pagado >= mc.valor_promesa
-        )                                                          AS cumplidos_mes,
-        COUNT(*) FILTER (
-          WHERE mc.resultado IN ('promesa_pago')
-            AND mc.fecha_promesa < CURRENT_DATE
-            AND (p.valor_pagado IS NULL OR p.valor_pagado < mc.valor_promesa)
-        )                                                          AS incumplidos,
-        COALESCE(SUM(mc.valor_promesa), 0)                         AS monto_comprometido
-      FROM cartera.mcp_gestiones mc
-      LEFT JOIN cartera.pagos p
-             ON p.id_credito = mc.id_credito
-            AND p.fecha_pago >= mc.created_at::date
-      WHERE mc.resultado = 'promesa_pago'
-    `;
-    const { rows } = await query<ResumenRow>(sql);
+        COUNT(*) FILTER (WHERE estado_acuerdo = 'ACTIVO')                       AS vigentes,
+        COUNT(*) FILTER (WHERE estado_acuerdo = 'CUMPLIDO'
+          AND updated_at >= DATE_TRUNC('month', CURRENT_DATE))                  AS cumplidos_mes,
+        COUNT(*) FILTER (WHERE estado_acuerdo = 'INCUMPLIDO')                   AS incumplidos,
+        COALESCE(SUM(valor_cuota_acuerdo * num_cuotas_acuerdo)
+          FILTER (WHERE estado_acuerdo = 'ACTIVO'), 0)                          AS monto_comprometido
+      FROM cartera.edu_acuerdos_pago
+    `);
     const row = rows[0];
     res.json({
       success: true,
@@ -127,145 +125,170 @@ export const getResumen = async (_req: Request, res: Response, next: NextFunctio
 };
 
 // =================================================================
-// Endpoint 2 — GET /api/acuerdos
+// GET /api/acuerdos — listado paginado
 // =================================================================
 
-// Columnas del CTE `base` que pueden usarse en ORDER BY (whitelisted).
 const SORT_COLS: Record<string, string> = {
-  cliente: 'cliente_nombre',
-  monto: 'valor_promesa',
-  cuotas: 'cuotas_pagadas',
-  proximoPago: 'fecha_promesa',
+  cliente: "cl.primer_nombre || ' ' || cl.primer_apellido",
+  monto: 'a.valor_cuota_acuerdo * a.num_cuotas_acuerdo',
+  cuotas: 'a.num_cuotas_acuerdo',
+  proximoPago: 'a.fecha_limite',
   cumplimiento: 'total_pagado',
-  estado: 'fecha_promesa',
+  estado: 'a.estado_acuerdo',
 };
 
 const RANGOS_FECHA: Record<string, string> = {
-  semana: `fecha_promesa BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days'`,
-  mes: `fecha_promesa BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'`,
-  vencido: `fecha_promesa < CURRENT_DATE`,
+  semana: `a.fecha_limite BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days'`,
+  mes: `a.fecha_limite BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'`,
+  vencido: `a.fecha_limite < CURRENT_DATE`,
 };
 
-const ESTADOS_VALIDOS: readonly EstadoAcuerdo[] = [
-  'Vigente',
-  'Cumplido',
-  'Incumplido',
-  'Vencido',
-];
-
 interface AcuerdoListRow {
-  id: number;
+  id_acuerdo: number;
   id_credito: string;
+  tipo_acuerdo: string | null;
+  descuento_pct_mora: string | null;
+  num_cuotas_acuerdo: string | number;
+  valor_cuota_acuerdo: string | null;
+  estado_acuerdo: string;
+  fecha_inicio: Date | string | null;
+  fecha_limite: Date | string | null;
+  creado_por: string | null;
+  notas: string | null;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
   id_cliente: string;
   cliente_nombre: string;
-  valor_promesa: string;
-  fecha_promesa: Date | string | null;
-  resultado: string;
-  created_at: Date | string;
-  cuotas_totales: string;
+  numero_credito: string;
   cuotas_pagadas: string;
   total_pagado: string;
-  total_count: string;
+  total_count?: string;
 }
+
+const mapAcuerdoListRow = (row: AcuerdoListRow) => {
+  const valorCuota = numOrZero(row.valor_cuota_acuerdo);
+  const cuotasTotales = numOrZero(row.num_cuotas_acuerdo);
+  const cuotasPagadas = numOrZero(row.cuotas_pagadas);
+  const montoAcordado = Math.round(valorCuota * cuotasTotales);
+  const totalPagado = Math.round(numOrZero(row.total_pagado));
+  const cumplimiento = computeCumplimiento(montoAcordado, totalPagado);
+  const estado = getEstadoUi(row.estado_acuerdo);
+  const sinProximoPago = estado !== 'Vigente';
+
+  return {
+    id: formatAcuerdoId(row.id_acuerdo),
+    clienteId: formatClienteId(row.id_cliente),
+    clienteNombre: (row.cliente_nombre ?? '').trim() || 'Sin nombre',
+    numeroCredito: row.numero_credito,
+    tipoAcuerdo: row.tipo_acuerdo,
+    montoAcordado,
+    cuotasPagadas,
+    cuotasTotales,
+    valorCuota: Math.round(valorCuota),
+    descuentoPctMora: numOrZero(row.descuento_pct_mora),
+    proximoPago: sinProximoPago
+      ? null
+      : {
+          fecha: fmtYmd(row.fecha_limite),
+          monto: Math.round(valorCuota),
+        },
+    cumplimiento,
+    estado,
+    creadoPor: row.creado_por,
+    notas: row.notas ?? '',
+    fechaInicio: fmtYmd(row.fecha_inicio),
+    fechaLimite: fmtYmd(row.fecha_limite),
+    createdAt: fmtIso(row.created_at),
+    updatedAt: fmtIso(row.updated_at),
+  };
+};
 
 export const listAcuerdos = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { page, limit, offset } = parsePagination(req.query as Record<string, unknown>);
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : null;
-    const estadoFilter =
-      typeof req.query.estado === 'string' ? req.query.estado : null;
+    const estadoUi =
+      typeof req.query.estado === 'string' ? req.query.estado.trim() : null;
     const rangoFecha =
-      typeof req.query.rangoFecha === 'string' ? req.query.rangoFecha : null;
+      typeof req.query.rangoFecha === 'string' ? req.query.rangoFecha.trim() : null;
 
     const sortByRaw =
       typeof req.query.sortBy === 'string' ? req.query.sortBy : 'proximoPago';
     const sortDirRaw =
       typeof req.query.sortDir === 'string' ? req.query.sortDir.toLowerCase() : 'desc';
-    const sortBy = SORT_COLS[sortByRaw] ? sortByRaw : 'proximoPago';
-    const sortDir = sortDirRaw === 'asc' ? 'ASC' : 'DESC';
-    const orderCol = SORT_COLS[sortBy];
+    const orderCol = SORT_COLS[sortByRaw] ?? SORT_COLS.proximoPago;
+    const orderDir = sortDirRaw === 'asc' ? 'ASC' : 'DESC';
 
-    // Filtros aplicados ANTES de la agregación (en el WHERE del CTE base).
-    const innerConditions: string[] = [`mc.resultado = 'promesa_pago'`];
+    const conditions: string[] = [];
     const params: unknown[] = [];
 
     if (search) {
       params.push(`%${search}%`);
       const i = params.length;
-      innerConditions.push(
+      conditions.push(
         `(
           (cl.primer_nombre || ' ' || cl.primer_apellido) ILIKE $${i}
-          OR cl.id_cliente::text ILIKE $${i}
-          OR mc.id::text ILIKE $${i}
+          OR cr.numero_credito ILIKE $${i}
+          OR a.id_acuerdo::text ILIKE $${i}
         )`,
       );
     }
 
-    // Filtros aplicados DESPUÉS de la agregación (sobre el CTE base).
-    const outerConditions: string[] = [];
-
-    if (rangoFecha && RANGOS_FECHA[rangoFecha]) {
-      outerConditions.push(RANGOS_FECHA[rangoFecha]);
+    if (estadoUi) {
+      // El frontend manda los estados en versión "Vigente/Cumplido/…" y la DB
+      // tiene los enums en mayúscula. Aceptamos ambos formatos.
+      const dbEstado =
+        ESTADO_UI_TO_DB[estadoUi] ??
+        (estadoUi.toUpperCase() as string);
+      if ((ESTADOS_DB_VALIDOS as readonly string[]).includes(dbEstado)) {
+        params.push(dbEstado);
+        conditions.push(`a.estado_acuerdo = $${params.length}`);
+      }
     }
 
-    if (estadoFilter && (ESTADOS_VALIDOS as readonly string[]).includes(estadoFilter)) {
-      switch (estadoFilter as EstadoAcuerdo) {
-        case 'Cumplido':
-          outerConditions.push(`valor_promesa > 0 AND total_pagado >= valor_promesa`);
-          break;
-        case 'Vencido':
-          outerConditions.push(
-            `total_pagado < valor_promesa AND fecha_promesa < CURRENT_DATE - INTERVAL '30 days'`,
-          );
-          break;
-        case 'Incumplido':
-          outerConditions.push(
-            `total_pagado < valor_promesa
-             AND fecha_promesa < CURRENT_DATE
-             AND fecha_promesa >= CURRENT_DATE - INTERVAL '30 days'`,
-          );
-          break;
-        case 'Vigente':
-          outerConditions.push(
-            `(total_pagado < valor_promesa OR valor_promesa = 0) AND fecha_promesa >= CURRENT_DATE`,
-          );
-          break;
-      }
+    if (rangoFecha && RANGOS_FECHA[rangoFecha]) {
+      conditions.push(RANGOS_FECHA[rangoFecha]);
     }
 
     const limitIdx = params.length + 1;
     const offsetIdx = params.length + 2;
 
     const sql = `
-      WITH base AS (
-        SELECT
-          mc.id,
-          mc.id_credito,
-          cl.id_cliente,
-          TRIM(COALESCE(cl.primer_nombre, '') || ' ' || COALESCE(cl.primer_apellido, '')) AS cliente_nombre,
-          mc.valor_promesa,
-          mc.fecha_promesa,
-          mc.resultado,
-          mc.created_at,
-          COUNT(cu.id_cuota)                                              AS cuotas_totales,
-          COUNT(cu.id_cuota) FILTER (WHERE cu.estado = 'PAGADA')          AS cuotas_pagadas,
-          COALESCE(SUM(p.valor_pagado) FILTER (
-            WHERE p.fecha_pago >= mc.created_at::date
-          ), 0)                                                            AS total_pagado
-        FROM cartera.mcp_gestiones mc
-        JOIN cartera.creditos cr ON cr.id_credito = mc.id_credito
-        JOIN cartera.clientes cl ON cl.id_cliente = cr.id_cliente
-        LEFT JOIN cartera.cuotas cu ON cu.id_credito = mc.id_credito
-        LEFT JOIN cartera.pagos  p  ON p.id_credito  = mc.id_credito
-        WHERE ${innerConditions.join(' AND ')}
-        GROUP BY mc.id, mc.id_credito, cl.id_cliente,
-                 cl.primer_nombre, cl.primer_apellido,
-                 mc.valor_promesa, mc.fecha_promesa, mc.resultado, mc.created_at
-      )
-      SELECT *, COUNT(*) OVER() AS total_count
-      FROM base
-      ${outerConditions.length ? `WHERE ${outerConditions.join(' AND ')}` : ''}
-      ORDER BY ${orderCol} ${sortDir} NULLS LAST
+      SELECT
+        a.id_acuerdo,
+        a.id_credito,
+        a.tipo_acuerdo,
+        a.descuento_pct_mora,
+        a.num_cuotas_acuerdo,
+        a.valor_cuota_acuerdo,
+        a.estado_acuerdo,
+        a.fecha_inicio,
+        a.fecha_limite,
+        a.creado_por,
+        a.notas,
+        a.created_at,
+        a.updated_at,
+        cl.id_cliente,
+        TRIM(COALESCE(cl.primer_nombre, '') || ' ' || COALESCE(cl.primer_apellido, '')) AS cliente_nombre,
+        cr.numero_credito,
+        (
+          SELECT COUNT(*)
+            FROM cartera.pagos p
+           WHERE p.id_credito = a.id_credito
+             AND p.fecha_pago >= a.fecha_inicio
+        )                                               AS cuotas_pagadas,
+        COALESCE((
+          SELECT SUM(p.valor_pagado)
+            FROM cartera.pagos p
+           WHERE p.id_credito = a.id_credito
+             AND p.fecha_pago >= a.fecha_inicio
+        ), 0)                                           AS total_pagado,
+        COUNT(*) OVER()                                 AS total_count
+      FROM cartera.edu_acuerdos_pago a
+      JOIN cartera.creditos cr ON cr.id_credito = a.id_credito
+      JOIN cartera.clientes cl ON cl.id_cliente = cr.id_cliente
+      ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
+      ORDER BY ${orderCol} ${orderDir} NULLS LAST
       LIMIT $${limitIdx} OFFSET $${offsetIdx}
     `;
 
@@ -273,35 +296,8 @@ export const listAcuerdos = async (req: Request, res: Response, next: NextFuncti
     params.push(offset);
 
     const { rows } = await query<AcuerdoListRow>(sql, params);
-    const total = rows[0] ? Number(rows[0].total_count) : 0;
-
-    const data = rows.map((row) => {
-      const fechaPromesa = toDate(row.fecha_promesa);
-      const valorPromesa = numOrZero(row.valor_promesa);
-      const totalPagado = numOrZero(row.total_pagado);
-      const cuotasTotales = numOrZero(row.cuotas_totales);
-      const estado = getEstadoAcuerdo(fechaPromesa, valorPromesa, totalPagado);
-      const cumplimiento = computeCumplimiento(valorPromesa, totalPagado);
-      const sinProximoPago = estado !== 'Vigente';
-      const divisor = cuotasTotales > 0 ? cuotasTotales : 1;
-
-      return {
-        id: formatAcuerdoId(row.id),
-        clienteId: formatClienteId(row.id_cliente),
-        clienteNombre: (row.cliente_nombre ?? '').trim() || 'Sin nombre',
-        montoAcordado: Math.round(valorPromesa),
-        cuotasPagadas: numOrZero(row.cuotas_pagadas),
-        cuotasTotales,
-        proximoPago: sinProximoPago
-          ? null
-          : {
-              fecha: fmtYmd(fechaPromesa) ?? '',
-              monto: Math.round(valorPromesa / divisor),
-            },
-        cumplimiento,
-        estado,
-      };
-    });
+    const total = rows[0]?.total_count ? Number(rows[0].total_count) : 0;
+    const data = rows.map(mapAcuerdoListRow);
 
     res.json({
       success: true,
@@ -319,25 +315,30 @@ export const listAcuerdos = async (req: Request, res: Response, next: NextFuncti
 };
 
 // =================================================================
-// Endpoint 3 — GET /api/acuerdos/:id (también reutilizado por POSTs)
+// GET /api/acuerdos/:id (helper reusado por POSTs)
 // =================================================================
 
 interface AcuerdoDetalleRow {
-  id: number;
+  id_acuerdo: number;
   id_credito: string;
-  valor_promesa: string;
-  fecha_promesa: Date | string | null;
-  condiciones: string | null;
-  created_at: Date | string;
-  canal: string | null;
+  tipo_acuerdo: string | null;
+  descuento_pct_mora: string | null;
+  num_cuotas_acuerdo: string | number;
+  valor_cuota_acuerdo: string | null;
+  estado_acuerdo: string;
+  fecha_inicio: Date | string | null;
+  fecha_limite: Date | string | null;
+  creado_por: string | null;
+  notas: string | null;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
   id_cliente: string;
   nombre: string;
   email: string | null;
   telefono_celular: string | null;
+  numero_credito: string;
+  tipo_credito: string;
   deuda_original: string | null;
-  valor_cuota: string | null;
-  fecha_inicio: Date | string | null;
-  fecha_fin: Date | string | null;
 }
 
 interface CuotaRow {
@@ -348,81 +349,109 @@ interface CuotaRow {
   estado: string;
 }
 
-interface GestionDetalleRow {
+interface UltimoPagoRow {
+  fecha_pago: Date | string;
+  valor_pagado: string | null;
+  medio_pago: string | null;
+}
+
+interface GestionRow {
   id: number;
   autor: string | null;
   created_at: Date | string;
   texto: string | null;
 }
 
-const fetchAcuerdoDetalle = async (id: number, gestorNombre: string) => {
+const fetchAcuerdoDetalle = async (id: number) => {
   const { rows: acuerdoRows } = await query<AcuerdoDetalleRow>(
-    `SELECT
-       mc.id, mc.id_credito, mc.valor_promesa, mc.fecha_promesa,
-       mc.notas AS condiciones, mc.created_at, mc.canal,
-       cl.id_cliente,
-       TRIM(COALESCE(cl.primer_nombre, '') || ' ' || COALESCE(cl.primer_apellido, '')) AS nombre,
-       cl.email, cl.telefono_celular,
-       cr.monto_desembolsado    AS deuda_original,
-       cr.valor_cuota,
-       cr.fecha_desembolso      AS fecha_inicio,
-       cr.fecha_ultima_cuota    AS fecha_fin
-     FROM cartera.mcp_gestiones mc
-     JOIN cartera.creditos cr ON cr.id_credito = mc.id_credito
-     JOIN cartera.clientes cl ON cl.id_cliente = cr.id_cliente
-     WHERE mc.id = $1`,
+    `
+    SELECT
+      a.id_acuerdo,
+      a.id_credito,
+      a.tipo_acuerdo,
+      a.descuento_pct_mora,
+      a.num_cuotas_acuerdo,
+      a.valor_cuota_acuerdo,
+      a.estado_acuerdo,
+      a.fecha_inicio,
+      a.fecha_limite,
+      a.creado_por,
+      a.notas,
+      a.created_at,
+      a.updated_at,
+      cl.id_cliente,
+      TRIM(COALESCE(cl.primer_nombre, '') || ' ' || COALESCE(cl.primer_apellido, '')) AS nombre,
+      cl.email,
+      cl.telefono_celular,
+      cr.numero_credito,
+      cr.tipo_credito,
+      cr.monto_desembolsado AS deuda_original
+    FROM cartera.edu_acuerdos_pago a
+    JOIN cartera.creditos cr ON cr.id_credito = a.id_credito
+    JOIN cartera.clientes cl ON cl.id_cliente = cr.id_cliente
+    WHERE a.id_acuerdo = $1
+    `,
     [id],
   );
   if (acuerdoRows.length === 0) return null;
   const acuerdo = acuerdoRows[0];
 
-  const createdAtYmd =
-    fmtYmd(acuerdo.created_at) ?? new Date().toISOString().slice(0, 10);
+  const fechaInicioYmd = fmtYmd(acuerdo.fecha_inicio) ?? new Date().toISOString().slice(0, 10);
 
-  const [cuotasResult, totalPagadoResult, notasResult] = await Promise.all([
+  const [cuotasResult, ultimosPagosResult, totalPagadoResult, notasResult] = await Promise.all([
     query<CuotaRow>(
-      `SELECT numero_cuota, fecha_vencimiento, fecha_pago,
-              valor_cuota_total, estado
+      `SELECT numero_cuota, fecha_vencimiento, fecha_pago, valor_cuota_total, estado
          FROM cartera.cuotas
         WHERE id_credito = $1
         ORDER BY numero_cuota ASC
         LIMIT 12`,
       [acuerdo.id_credito],
     ),
-    query<{ total_pagado: string }>(
-      `SELECT COALESCE(SUM(valor_pagado), 0)::text AS total_pagado
+    query<UltimoPagoRow>(
+      `SELECT fecha_pago, valor_pagado, medio_pago
+         FROM cartera.pagos
+        WHERE id_credito = $1
+          AND fecha_pago >= $2
+        ORDER BY fecha_pago DESC
+        LIMIT 5`,
+      [acuerdo.id_credito, fechaInicioYmd],
+    ),
+    query<{ total_pagado: string; cuotas_pagadas: string }>(
+      `SELECT COALESCE(SUM(valor_pagado), 0)::text AS total_pagado,
+              COUNT(*)::text                       AS cuotas_pagadas
          FROM cartera.pagos
         WHERE id_credito = $1
           AND fecha_pago >= $2`,
-      [acuerdo.id_credito, createdAtYmd],
+      [acuerdo.id_credito, fechaInicioYmd],
     ),
-    query<GestionDetalleRow>(
-      // Filtramos los `promesa_pago` para que el propio acuerdo (y otros
-      // acuerdos del mismo crédito) no se muestren a sí mismos como notas.
-      // Antes del rename eso ya funcionaba porque acuerdos y notas vivían
-      // en tablas distintas; ahora comparten cartera.mcp_gestiones.
+    query<GestionRow>(
       `SELECT id, canal AS autor, created_at, notas AS texto
          FROM cartera.mcp_gestiones
         WHERE id_credito = $1
-          AND resultado <> 'promesa_pago'
-        ORDER BY created_at DESC`,
+        ORDER BY created_at DESC
+        LIMIT 20`,
       [acuerdo.id_credito],
     ),
   ]);
 
   const cuotasRows = cuotasResult.rows;
+  const ultimosPagosRows = ultimosPagosResult.rows;
   const totalPagado = numOrZero(totalPagadoResult.rows[0]?.total_pagado);
+  const cuotasPagadasReal = numOrZero(totalPagadoResult.rows[0]?.cuotas_pagadas);
   const notasRows = notasResult.rows;
 
-  const valorPromesa = numOrZero(acuerdo.valor_promesa);
-  const fechaPromesa = toDate(acuerdo.fecha_promesa);
-  const estado = getEstadoAcuerdo(fechaPromesa, valorPromesa, totalPagado);
-  const cumplimiento = computeCumplimiento(valorPromesa, totalPagado);
+  const valorCuota = numOrZero(acuerdo.valor_cuota_acuerdo);
+  const cuotasTotales = numOrZero(acuerdo.num_cuotas_acuerdo);
+  const montoAcordado = Math.round(valorCuota * cuotasTotales);
+  const estado = getEstadoUi(acuerdo.estado_acuerdo);
+  const cumplimiento = computeCumplimiento(montoAcordado, Math.round(totalPagado));
   const today = startOfDay(new Date());
 
+  // Cuotas del crédito subyacente (la amortización original). Se conserva el
+  // shape histórico del detalle aunque el acuerdo no tenga cuotas propias.
   const cuotas = cuotasRows.map((c) => {
     const venc = toDate(c.fecha_vencimiento);
-    let estadoCuota: EstadoCuota;
+    let estadoCuota: 'Pagada' | 'Pendiente' | 'Atrasada';
     if (c.estado === 'PAGADA') {
       estadoCuota = 'Pagada';
     } else if (venc && venc < today) {
@@ -440,29 +469,44 @@ const fetchAcuerdoDetalle = async (id: number, gestorNombre: string) => {
   });
 
   return {
-    id: formatAcuerdoId(acuerdo.id),
+    id: formatAcuerdoId(acuerdo.id_acuerdo),
     clienteId: formatClienteId(acuerdo.id_cliente),
     clienteNombre: (acuerdo.nombre ?? '').trim() || 'Sin nombre',
     clienteEmail: acuerdo.email ?? null,
     clienteTelefono: acuerdo.telefono_celular ?? null,
+    numeroCredito: acuerdo.numero_credito,
+    tipoCredito: acuerdo.tipo_credito,
+    tipoAcuerdo: acuerdo.tipo_acuerdo,
     deudaOriginal: Math.round(numOrZero(acuerdo.deuda_original)),
-    montoAcordado: Math.round(valorPromesa),
-    cuotasTotales: cuotas.length,
-    cuotasPagadas: cuotas.filter((c) => c.estado === 'Pagada').length,
-    valorCuota: Math.round(numOrZero(acuerdo.valor_cuota)),
+    montoAcordado,
+    cuotasTotales,
+    cuotasPagadas: cuotasPagadasReal,
+    valorCuota: Math.round(valorCuota),
+    descuentoPctMora: numOrZero(acuerdo.descuento_pct_mora),
     fechaInicio: fmtYmd(acuerdo.fecha_inicio),
-    fechaFin: fmtYmd(acuerdo.fecha_fin),
+    fechaLimite: fmtYmd(acuerdo.fecha_limite),
+    // Conservamos `fechaFin` con el mismo valor de `fechaLimite` por compat
+    // con consumidores legados del detalle.
+    fechaFin: fmtYmd(acuerdo.fecha_limite),
     proximoPago:
       estado === 'Vigente'
         ? {
-            fecha: fmtYmd(acuerdo.fecha_promesa) ?? '',
-            monto: Math.round(numOrZero(acuerdo.valor_cuota)),
+            fecha: fmtYmd(acuerdo.fecha_limite),
+            monto: Math.round(valorCuota),
           }
         : null,
     estado,
     cumplimiento,
-    gestor: gestorNombre,
-    condiciones: acuerdo.condiciones ?? '',
+    gestor: acuerdo.creado_por ?? 'Sistema',
+    creadoPor: acuerdo.creado_por,
+    condiciones: acuerdo.notas ?? '',
+    createdAt: fmtIso(acuerdo.created_at),
+    updatedAt: fmtIso(acuerdo.updated_at),
+    ultimosPagos: ultimosPagosRows.map((p) => ({
+      fecha: fmtYmd(p.fecha_pago) ?? '',
+      monto: Math.round(numOrZero(p.valor_pagado)),
+      medioPago: p.medio_pago ?? null,
+    })),
     cuotas,
     notas: notasRows.map((n) => ({
       id: n.id,
@@ -476,7 +520,7 @@ const fetchAcuerdoDetalle = async (id: number, gestorNombre: string) => {
 export const getAcuerdo = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = parseAcuerdoId(req.params.id);
-    const data = await fetchAcuerdoDetalle(id, req.user?.name ?? 'Sistema');
+    const data = await fetchAcuerdoDetalle(id);
     if (!data) throw notFound('Acuerdo no encontrado');
     res.json({ success: true, data });
   } catch (err) {
@@ -485,10 +529,187 @@ export const getAcuerdo = async (req: Request, res: Response, next: NextFunction
 };
 
 // =================================================================
-// Endpoint 4 — POST /api/acuerdos/:id/pagos
+// POST /api/acuerdos
+// =================================================================
+
+export const createAcuerdo = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const body = req.body ?? {};
+    const idCredito = assertUuid(body.id_credito, 'id_credito');
+
+    const tipoAcuerdo =
+      typeof body.tipo_acuerdo === 'string' && body.tipo_acuerdo.trim()
+        ? body.tipo_acuerdo.trim()
+        : null;
+    if (!tipoAcuerdo) throw badRequest('tipo_acuerdo es requerido');
+
+    const descuentoPctMora = Number(body.descuento_pct_mora ?? 0);
+    if (!Number.isFinite(descuentoPctMora) || descuentoPctMora < 0 || descuentoPctMora > 100) {
+      throw badRequest('descuento_pct_mora debe estar entre 0 y 100');
+    }
+
+    const numCuotas = Number(body.num_cuotas_acuerdo);
+    if (!Number.isInteger(numCuotas) || numCuotas <= 0) {
+      throw badRequest('num_cuotas_acuerdo debe ser un entero > 0');
+    }
+
+    const valorCuota = Number(body.valor_cuota_acuerdo);
+    if (!Number.isFinite(valorCuota) || valorCuota <= 0) {
+      throw badRequest('valor_cuota_acuerdo debe ser > 0');
+    }
+
+    if (
+      typeof body.fecha_limite !== 'string' ||
+      !YMD_RE.test(body.fecha_limite)
+    ) {
+      throw badRequest('fecha_limite es requerida (YYYY-MM-DD)');
+    }
+    const fechaLimite = body.fecha_limite;
+    const fl = new Date(fechaLimite);
+    if (Number.isNaN(fl.getTime())) throw badRequest('fecha_limite inválida');
+    if (startOfDay(fl) < startOfDay(new Date())) {
+      throw badRequest('fecha_limite debe ser una fecha futura');
+    }
+
+    let fechaInicio: string | null = null;
+    if (body.fecha_inicio !== undefined && body.fecha_inicio !== null) {
+      if (typeof body.fecha_inicio !== 'string' || !YMD_RE.test(body.fecha_inicio)) {
+        throw badRequest('fecha_inicio debe ser YYYY-MM-DD');
+      }
+      fechaInicio = body.fecha_inicio;
+    }
+
+    const notas = typeof body.notas === 'string' ? body.notas : null;
+    const creadoPor = req.user?.name ?? 'gestor';
+
+    // Verificar que el crédito exista (FK formal, pero validamos para
+    // devolver un 400 con mensaje útil en lugar de un 500 de pg).
+    const { rows: credito } = await query<{ id_credito: string }>(
+      `SELECT id_credito FROM cartera.creditos WHERE id_credito = $1`,
+      [idCredito],
+    );
+    if (credito.length === 0) {
+      throw badRequest('id_credito no existe en cartera.creditos', 'INVALID_FK');
+    }
+
+    const { rows: inserted } = await query<{ id_acuerdo: number }>(
+      `INSERT INTO cartera.edu_acuerdos_pago
+         (id_credito, tipo_acuerdo, descuento_pct_mora, num_cuotas_acuerdo,
+          valor_cuota_acuerdo, fecha_inicio, fecha_limite, creado_por, notas)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6::date, CURRENT_DATE), $7, $8, $9)
+       RETURNING id_acuerdo`,
+      [
+        idCredito,
+        tipoAcuerdo,
+        descuentoPctMora,
+        numCuotas,
+        valorCuota,
+        fechaInicio,
+        fechaLimite,
+        creadoPor,
+        notas,
+      ],
+    );
+
+    const data = await fetchAcuerdoDetalle(inserted[0].id_acuerdo);
+    if (!data) throw notFound('No se pudo recuperar el acuerdo creado');
+    res.status(201).json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// =================================================================
+// PUT /api/acuerdos/:id — actualización parcial
+// =================================================================
+//
+// Solo permite actualizar: notas, fecha_limite, valor_cuota_acuerdo,
+// estado_acuerdo. Otros campos quedan inmutables.
+
+export const updateAcuerdo = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = parseAcuerdoId(req.params.id);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    let notas: string | null | undefined = undefined;
+    if (Object.prototype.hasOwnProperty.call(body, 'notas')) {
+      notas = typeof body.notas === 'string' ? body.notas : null;
+    }
+
+    let fechaLimite: string | null | undefined = undefined;
+    if (body.fecha_limite !== undefined) {
+      if (typeof body.fecha_limite !== 'string' || !YMD_RE.test(body.fecha_limite)) {
+        throw badRequest('fecha_limite debe ser YYYY-MM-DD');
+      }
+      if (Number.isNaN(new Date(body.fecha_limite).getTime())) {
+        throw badRequest('fecha_limite inválida');
+      }
+      fechaLimite = body.fecha_limite;
+    }
+
+    let valorCuota: number | undefined = undefined;
+    if (body.valor_cuota_acuerdo !== undefined) {
+      const v = Number(body.valor_cuota_acuerdo);
+      if (!Number.isFinite(v) || v <= 0) {
+        throw badRequest('valor_cuota_acuerdo debe ser > 0');
+      }
+      valorCuota = v;
+    }
+
+    let estadoDb: string | undefined = undefined;
+    if (body.estado_acuerdo !== undefined) {
+      const raw = String(body.estado_acuerdo).trim();
+      const candidato =
+        ESTADO_UI_TO_DB[raw] ?? raw.toUpperCase();
+      if (!(ESTADOS_DB_VALIDOS as readonly string[]).includes(candidato)) {
+        throw badRequest(
+          `estado_acuerdo debe ser uno de: ${ESTADOS_DB_VALIDOS.join(', ')}`,
+        );
+      }
+      estadoDb = candidato;
+    }
+
+    if (
+      notas === undefined &&
+      fechaLimite === undefined &&
+      valorCuota === undefined &&
+      estadoDb === undefined
+    ) {
+      throw badRequest('No hay campos válidos para actualizar');
+    }
+
+    const { rowCount } = await query(
+      `UPDATE cartera.edu_acuerdos_pago
+          SET notas               = COALESCE($1, notas),
+              fecha_limite        = COALESCE($2::date, fecha_limite),
+              valor_cuota_acuerdo = COALESCE($3, valor_cuota_acuerdo),
+              estado_acuerdo      = COALESCE($4::cartera.estado_acuerdo_enum, estado_acuerdo),
+              updated_at          = NOW()
+        WHERE id_acuerdo = $5`,
+      [
+        notas ?? null,
+        fechaLimite ?? null,
+        valorCuota ?? null,
+        estadoDb ?? null,
+        id,
+      ],
+    );
+    if (!rowCount) throw notFound('Acuerdo no encontrado');
+
+    const data = await fetchAcuerdoDetalle(id);
+    if (!data) throw notFound('Acuerdo no encontrado');
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// =================================================================
+// POST /api/acuerdos/:id/pagos
 // =================================================================
 
 export const registrarPago = async (req: Request, res: Response, next: NextFunction) => {
+  const client = await pool.connect();
   try {
     const id = parseAcuerdoId(req.params.id);
 
@@ -498,20 +719,25 @@ export const registrarPago = async (req: Request, res: Response, next: NextFunct
     }
 
     const fecha = req.body?.fecha;
-    if (typeof fecha !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+    if (typeof fecha !== 'string' || !YMD_RE.test(fecha)) {
       throw badRequest('fecha es requerida (YYYY-MM-DD)');
     }
     if (Number.isNaN(new Date(fecha).getTime())) {
       throw badRequest('fecha inválida');
     }
 
-    const { rows: acuerdoRows } = await query<{ id_credito: string }>(
-      `SELECT id_credito FROM cartera.mcp_gestiones WHERE id = $1`,
+    await client.query('BEGIN');
+
+    const { rows: acuerdoRows } = await client.query(
+      `SELECT id_credito, valor_cuota_acuerdo, num_cuotas_acuerdo, fecha_inicio
+         FROM cartera.edu_acuerdos_pago
+        WHERE id_acuerdo = $1`,
       [id],
     );
     if (acuerdoRows.length === 0) throw notFound('Acuerdo no encontrado');
+    const acuerdo = acuerdoRows[0];
 
-    await query(
+    await client.query(
       `INSERT INTO cartera.pagos (
          id_credito, valor_pagado, valor_capital_abonado,
          valor_intereses_abonado, valor_mora_abonado, valor_seguro_abonado,
@@ -521,58 +747,35 @@ export const registrarPago = async (req: Request, res: Response, next: NextFunct
          $3, $3, 'TRANSFERENCIA',
          'ACU-' || $4::text || '-' || TO_CHAR(NOW(), 'YYYYMMDDHH24MISS')
        )`,
-      [acuerdoRows[0].id_credito, monto, fecha, id],
+      [acuerdo.id_credito, monto, fecha, id],
     );
 
-    const data = await fetchAcuerdoDetalle(id, req.user?.name ?? 'Sistema');
-    if (!data) throw notFound('Acuerdo no encontrado');
-    res.status(201).json({ success: true, data });
-  } catch (err) {
-    next(err);
-  }
-};
-
-// =================================================================
-// Endpoint 5 — POST /api/acuerdos/:id/incumplir
-// =================================================================
-
-export const marcarIncumplido = async (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) => {
-  const client = await pool.connect();
-  try {
-    const id = parseAcuerdoId(req.params.id);
-    const motivo =
-      typeof req.body?.motivo === 'string' && req.body.motivo.trim()
-        ? req.body.motivo.trim()
-        : 'Sin motivo';
-
-    const { rows: acuerdoRows } = await client.query(
-      `SELECT id_credito FROM cartera.mcp_gestiones WHERE id = $1`,
-      [id],
+    // Si la suma de pagos desde fecha_inicio cubre el monto acordado,
+    // marcar el acuerdo como CUMPLIDO.
+    const { rows: totalRows } = await client.query<{ total_pagado: string }>(
+      `SELECT COALESCE(SUM(valor_pagado), 0)::text AS total_pagado
+         FROM cartera.pagos
+        WHERE id_credito = $1
+          AND fecha_pago >= $2`,
+      [acuerdo.id_credito, acuerdo.fecha_inicio],
     );
-    if (acuerdoRows.length === 0) throw notFound('Acuerdo no encontrado');
-    const idCredito = acuerdoRows[0].id_credito;
+    const totalPagado = numOrZero(totalRows[0]?.total_pagado);
+    const montoAcordado =
+      numOrZero(acuerdo.valor_cuota_acuerdo) * numOrZero(acuerdo.num_cuotas_acuerdo);
+    if (montoAcordado > 0 && totalPagado >= montoAcordado) {
+      await client.query(
+        `UPDATE cartera.edu_acuerdos_pago
+            SET estado_acuerdo = 'CUMPLIDO', updated_at = NOW()
+          WHERE id_acuerdo = $1`,
+        [id],
+      );
+    }
 
-    await client.query('BEGIN');
-    await client.query(
-      `INSERT INTO cartera.mcp_gestiones (id_credito, canal, resultado, notas)
-       VALUES ($1, 'sistema', 'rechazado', $2)`,
-      [idCredito, motivo],
-    );
-    await client.query(
-      `UPDATE cartera.mcp_gestiones
-          SET notas = COALESCE(notas, '') || E'\\nIncumplido: ' || $1
-        WHERE id = $2`,
-      [motivo, id],
-    );
     await client.query('COMMIT');
 
-    const data = await fetchAcuerdoDetalle(id, req.user?.name ?? 'Sistema');
+    const data = await fetchAcuerdoDetalle(id);
     if (!data) throw notFound('Acuerdo no encontrado');
-    res.json({ success: true, data });
+    res.status(201).json({ success: true, data });
   } catch (err) {
     try {
       await client.query('ROLLBACK');
@@ -586,8 +789,45 @@ export const marcarIncumplido = async (
 };
 
 // =================================================================
-// Endpoint 6 — POST /api/acuerdos/:id/notas
+// POST /api/acuerdos/:id/incumplir
 // =================================================================
+
+export const marcarIncumplido = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const id = parseAcuerdoId(req.params.id);
+    const motivo =
+      typeof req.body?.motivo === 'string' && req.body.motivo.trim()
+        ? req.body.motivo.trim()
+        : 'Sin motivo';
+
+    const { rowCount } = await query(
+      `UPDATE cartera.edu_acuerdos_pago
+          SET estado_acuerdo = 'INCUMPLIDO',
+              notas = COALESCE(notas, '') || E'\\nIncumplido: ' || $1,
+              updated_at = NOW()
+        WHERE id_acuerdo = $2`,
+      [motivo, id],
+    );
+    if (!rowCount) throw notFound('Acuerdo no encontrado');
+
+    const data = await fetchAcuerdoDetalle(id);
+    if (!data) throw notFound('Acuerdo no encontrado');
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// =================================================================
+// POST /api/acuerdos/:id/notas
+// =================================================================
+//
+// Las notas/gestiones siguen viviendo en cartera.mcp_gestiones — no en
+// edu_acuerdos_pago. Insertamos contra el id_credito del acuerdo.
 
 export const createNotaAcuerdo = async (
   req: Request,
@@ -601,13 +841,14 @@ export const createNotaAcuerdo = async (
     if (!texto) throw badRequest('texto es requerido');
 
     const { rows: acuerdoRows } = await query<{ id_credito: string }>(
-      `SELECT id_credito FROM cartera.mcp_gestiones WHERE id = $1`,
+      `SELECT id_credito FROM cartera.edu_acuerdos_pago WHERE id_acuerdo = $1`,
       [id],
     );
     if (acuerdoRows.length === 0) throw notFound('Acuerdo no encontrado');
 
     const { rows: inserted } = await query<{ id: number; created_at: Date | string }>(
-      `INSERT INTO cartera.mcp_gestiones (id_credito, canal, resultado, notas, created_at)
+      `INSERT INTO cartera.mcp_gestiones
+         (id_credito, canal, resultado, notas, created_at)
        VALUES ($1, 'sistema', 'enviado', $2, NOW())
        RETURNING id, created_at`,
       [acuerdoRows[0].id_credito, texto],
@@ -629,119 +870,29 @@ export const createNotaAcuerdo = async (
 };
 
 // =================================================================
-// Endpoint 7 — POST /api/acuerdos (nuevo acuerdo)
+// DELETE /api/acuerdos/:id — soft delete (estado → INCUMPLIDO)
 // =================================================================
 
-export const createAcuerdo = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const body = req.body ?? {};
-    const idCredito = assertUuid(body.id_credito, 'id_credito');
-
-    const valorPromesa = Number(body.valor_promesa);
-    if (!Number.isFinite(valorPromesa) || valorPromesa <= 0) {
-      throw badRequest('valor_promesa debe ser mayor a 0');
-    }
-
-    const fechaPromesa = body.fecha_promesa;
-    if (typeof fechaPromesa !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(fechaPromesa)) {
-      throw badRequest('fecha_promesa es requerida (YYYY-MM-DD)');
-    }
-    const fp = new Date(fechaPromesa);
-    if (Number.isNaN(fp.getTime())) throw badRequest('fecha_promesa inválida');
-    if (startOfDay(fp) < startOfDay(new Date())) {
-      throw badRequest('fecha_promesa debe ser una fecha futura');
-    }
-
-    const canal = typeof body.canal === 'string' ? body.canal : 'manual';
-    const notas = typeof body.notas === 'string' ? body.notas : null;
-
-    // mcp_gestiones.id_credito no tiene FK formal; validamos a mano que el
-    // crédito exista antes de insertar para no crear gestiones huérfanas.
-    const { rows: credito } = await query<{ id_credito: string }>(
-      `SELECT id_credito FROM cartera.creditos WHERE id_credito = $1`,
-      [idCredito],
-    );
-    if (credito.length === 0) {
-      throw badRequest('id_credito no existe en cartera.creditos', 'INVALID_FK');
-    }
-
-    const { rows: inserted } = await query<{ id: number }>(
-      `INSERT INTO cartera.mcp_gestiones
-         (id_credito, canal, resultado, valor_promesa, fecha_promesa, notas, created_at)
-       VALUES ($1, $2, 'promesa_pago', $3, $4, $5, NOW())
-       RETURNING id`,
-      [idCredito, canal, valorPromesa, fechaPromesa, notas],
-    );
-    const id = inserted[0].id;
-
-    const data = await fetchAcuerdoDetalle(id, req.user?.name ?? 'Sistema');
-    if (!data) throw notFound('No se pudo recuperar el acuerdo creado');
-    res.status(201).json({ success: true, data });
-  } catch (err) {
-    next(err);
-  }
-};
-
-// =================================================================
-// PUT /api/acuerdos/:id — actualización parcial
-// =================================================================
-//
-// Whitelist: notas, fecha_promesa, valor_promesa. El campo `respuesta` ya
-// no existe en mcp_gestiones; se removió a propósito.
-
-const UPDATABLE_FIELDS = ['notas', 'fecha_promesa', 'valor_promesa'] as const;
-type UpdatableField = (typeof UPDATABLE_FIELDS)[number];
-
-export const updateAcuerdo = async (req: Request, res: Response, next: NextFunction) => {
+export const deleteAcuerdo = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = parseAcuerdoId(req.params.id);
-    const body = (req.body ?? {}) as Record<string, unknown>;
-
-    const setClauses: string[] = [];
-    const params: unknown[] = [];
-
-    for (const field of UPDATABLE_FIELDS) {
-      if (!Object.prototype.hasOwnProperty.call(body, field)) continue;
-      const value: unknown = body[field as UpdatableField];
-
-      if (field === 'valor_promesa') {
-        const v = Number(value);
-        if (!Number.isFinite(v) || v <= 0) {
-          throw badRequest('valor_promesa debe ser mayor a 0');
-        }
-        params.push(v);
-      } else if (field === 'fecha_promesa') {
-        if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-          throw badRequest('fecha_promesa debe ser YYYY-MM-DD');
-        }
-        if (Number.isNaN(new Date(value).getTime())) {
-          throw badRequest('fecha_promesa inválida');
-        }
-        params.push(value);
-      } else {
-        // notas: acepta string o null para limpiar.
-        params.push(value === null ? null : String(value ?? ''));
-      }
-
-      setClauses.push(`${field} = $${params.length}`);
-    }
-
-    if (setClauses.length === 0) {
-      throw badRequest('No hay campos válidos para actualizar');
-    }
-
-    params.push(id);
-    const { rowCount } = await query(
-      `UPDATE cartera.mcp_gestiones
-          SET ${setClauses.join(', ')}
-        WHERE id = $${params.length}`,
-      params,
+    const { rows } = await query<{ id_acuerdo: number }>(
+      `UPDATE cartera.edu_acuerdos_pago
+          SET estado_acuerdo = 'INCUMPLIDO', updated_at = NOW()
+        WHERE id_acuerdo = $1
+        RETURNING id_acuerdo`,
+      [id],
     );
-    if (!rowCount) throw notFound('Acuerdo no encontrado');
+    if (rows.length === 0) throw notFound('Acuerdo no encontrado');
 
-    const data = await fetchAcuerdoDetalle(id, req.user?.name ?? 'Sistema');
-    if (!data) throw notFound('Acuerdo no encontrado');
-    res.json({ success: true, data });
+    res.json({
+      success: true,
+      data: {
+        id: formatAcuerdoId(rows[0].id_acuerdo),
+        estado: 'Incumplido',
+        message: 'Acuerdo cancelado',
+      },
+    });
   } catch (err) {
     next(err);
   }

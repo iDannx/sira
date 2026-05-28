@@ -5,6 +5,7 @@ import {
   getAcuerdo,
   createAcuerdo,
   updateAcuerdo,
+  deleteAcuerdo,
   registrarPago,
   marcarIncumplido,
   createNotaAcuerdo,
@@ -21,6 +22,7 @@ router.post('/', createAcuerdo);
 
 router.get('/:id', getAcuerdo);
 router.put('/:id', updateAcuerdo);
+router.delete('/:id', deleteAcuerdo);
 router.post('/:id/pagos', registrarPago);
 router.post('/:id/incumplir', marcarIncumplido);
 router.post('/:id/notas', createNotaAcuerdo);

@@ -16,7 +16,6 @@ SIRA is a collaborative full-stack project composed of three services:
 sira/
 ├── backend/      # Node.js + Express API
 ├── frontend/     # React + Vite + Tailwind SPA
-└── python-api/   # Optional FastAPI service
 ```
 
 ---

@@ -136,7 +136,7 @@ export function LoginPage() {
 
         {/* Logo */}
         <div className="flex justify-center mb-8">
-          <img src="/Logo_SIRA_Light.png" alt="SIRA" className="h-24 w-auto object-contain" />
+          <img src="/Logo_SIRA_Light.png" alt="SIRA" className="h-30 w-auto object-contain" />
         </div>
 
         <h3 className="text-2xl font-bold text-navy-dark mb-1">Iniciar sesión en SIRA</h3>
@@ -192,17 +192,6 @@ export function LoginPage() {
             </div>
           </div>
 
-          {/* Remember */}
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="remember"
-              defaultChecked
-              className="w-4 h-4 rounded border-slate-300 accent-cyan-500"
-            />
-            <label htmlFor="remember" className="text-sm font-medium text-slate-600">Recordarme por 30 días</label>
-          </div>
-
           {/* Error */}
           {error && (
             <div role="alert" className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs font-medium text-red-700">
@@ -222,27 +211,6 @@ export function LoginPage() {
             {loading ? 'Iniciando sesión...' : 'Iniciar sesión'}
           </button>
         </form>
-
-        {/* Social */}
-        <div className="mt-6">
-          <div className="relative mb-5 text-center">
-            <div className="absolute inset-x-0 top-1/2 h-px bg-slate-100" />
-            <span className="relative z-10 bg-white px-4 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">o continuar con</span>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <button className="flex items-center justify-center gap-2 border border-slate-200 py-3 rounded-xl hover:bg-slate-50 transition-colors font-semibold text-slate-700 text-sm">
-              <GoogleIcon /> Google
-            </button>
-            <button className="flex items-center justify-center gap-2 border border-slate-200 py-3 rounded-xl hover:bg-slate-50 transition-colors font-semibold text-slate-700 text-sm">
-              <MicrosoftIcon /> Microsoft
-            </button>
-          </div>
-        </div>
-
-        <p className="text-center text-xs text-slate-400 mt-6">
-          ¿No tienes cuenta?{' '}
-          <a href="#" className="font-bold text-cyan-600 hover:underline">Contacta a tu institución.</a>
-        </p>
       </div>
       </div>
     </div>
