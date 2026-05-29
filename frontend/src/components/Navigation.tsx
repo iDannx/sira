@@ -46,8 +46,8 @@ export function Sidebar() {
   const links = [
     { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
     { name: 'Cartera', icon: Wallet, to: '/cartera' },
-    { name: 'Acuerdos', icon: FileText, to: '/acuerdos' },
     { name: 'Campañas', icon: Megaphone, to: '/campanas' },
+    { name: 'Acuerdos', icon: FileText, to: '/acuerdos' },
   ];
 
   return (

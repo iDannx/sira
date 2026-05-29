@@ -44,6 +44,7 @@ export interface DashboardStats {
   carteraVencida: number;
   carteraAlDia: number;
   recuperacionMes: number;
+  tasaMora: number;
   tendencias: {
     carteraTotal: string;
     carteraVencida: string;
@@ -56,8 +57,35 @@ export type Calificacion = 'A' | 'B' | 'C' | 'D' | 'E';
 
 export interface DistribucionCarteraItem {
   categoria: Calificacion;
+  descripcion: string;
+  creditos: number;
   monto: number;
   porcentaje: number;
+  varVsAnteriorPct: number | null;
+  carteraTotal: number;
+  varTotalPct: number | null;
+}
+
+export interface EstadoJuridicoItem {
+  estado: string;
+  cantidad: number;
+  saldoTotal: number;
+}
+
+export interface AlertasAcademicas {
+  bloqueosMatricula: number;
+  diplomasRetenidos: number;
+  codeudoresRiesgo: number;
+  moraCriticaActivos: number;
+  preventivos5d: number;
+  acuerdosActivos: number;
+}
+
+export interface GestionEscenarioItem {
+  escenario: string;
+  creditos: number;
+  saldoMora: number;
+  diasMoraPromedio: number;
 }
 
 export interface EvolucionRecuperacionItem {

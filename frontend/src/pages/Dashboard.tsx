@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   TrendingUp, ChevronDown, Landmark, AlertCircle, CircleCheckBig,
   BarChart3, Wallet, Clock, CalendarDays, AlertTriangle, Info,
-  PieChart as PieIcon, Loader2, RefreshCw,
+  PieChart as PieIcon, Loader2, RefreshCw, Percent,
+  PhoneOff, Award, Users, FileText, GraduationCap,
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -11,6 +12,8 @@ import {
   getStats,
   getDistribucionCartera,
   getEvolucionRecuperacion,
+  getAlertasAcademicas,
+  getGestionActivaEscenario,
 } from '../services/dashboard';
 import { getApiErrorMessage } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
@@ -20,8 +23,6 @@ import {
   calificacionLabel,
 } from '../utils/format';
 
-// Formato uniforme en millones para todos los montos del Dashboard.
-// Ej: 1.234.567.890 → "$1.234M" · 865.000.000 → "$865M" · 1.500.000 → "$1,50M".
 const MILLONES_FORMATTER_INT  = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const MILLONES_FORMATTER_DEC1 = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const MILLONES_FORMATTER_DEC2 = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -34,10 +35,16 @@ function formatMillones(value: number | null | undefined): string {
                          : MILLONES_FORMATTER_DEC2;
   return `$${fmt.format(m)}M`;
 }
+
+const NUM_CO = new Intl.NumberFormat('es-CO');
+function formatNum(n: number) { return NUM_CO.format(n); }
+
 import type {
   DashboardStats,
   DistribucionCarteraItem,
   EvolucionRecuperacionItem,
+  AlertasAcademicas,
+  GestionEscenarioItem,
   Calificacion,
 } from '../types/api';
 
@@ -52,10 +59,22 @@ const CAT_STYLES: Record<Calificacion, {
   E: { bar: '#ef4444', iconBg: 'bg-red-50',     iconColor: 'text-red-500',     badgeBg: 'bg-red-50',     badgeText: 'text-red-500',     Icon: AlertTriangle },
 };
 
+const ESCENARIO_COLORS: Record<string, string> = {
+  'Preventivo':              '#22c55e',
+  'Mora temprana - activos': '#f59e0b',
+  'Mora media - activos':    '#fb923c',
+  'Mora crítica - activos':  '#ef4444',
+  'Mora temprana - graduados': '#a78bfa',
+  'Mora media - graduados':    '#8b5cf6',
+  'Mora crítica - graduados':  '#6d28d9',
+};
+
 interface DashboardData {
   stats: DashboardStats;
   distribucion: DistribucionCarteraItem[];
   evolucion: EvolucionRecuperacionItem[];
+  alertasAcademicas: AlertasAcademicas | null;
+  gestionEscenarios: GestionEscenarioItem[];
 }
 
 type EvolucionMeses = 3 | 6 | 12;
@@ -71,12 +90,14 @@ export function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      const [stats, distribucion, evolucion] = await Promise.all([
+      const [stats, distribucion, evolucion, alertasAcademicas, gestionEscenarios] = await Promise.all([
         getStats(),
         getDistribucionCartera(),
         getEvolucionRecuperacion(),
+        getAlertasAcademicas(),
+        getGestionActivaEscenario(),
       ]);
-      setData({ stats, distribucion, evolucion });
+      setData({ stats, distribucion, evolucion, alertasAcademicas, gestionEscenarios });
     } catch (err) {
       setError(getApiErrorMessage(err));
     } finally {
@@ -84,12 +105,8 @@ export function Dashboard() {
     }
   };
 
-  useEffect(() => {
-    void load();
-  }, []);
+  useEffect(() => { void load(); }, []);
 
-  // El backend ya devuelve un arreglo ordenado por mes y sin valores futuros.
-  // El selector recorta los últimos N meses para visualizar 12/6/3.
   const evolucionFiltrada = useMemo(() => {
     const evo = data?.evolucion ?? [];
     return evo.slice(-evolucionMeses);
@@ -125,6 +142,12 @@ export function Dashboard() {
 
   const stats = data.stats ?? null;
   const distribucion = data.distribucion ?? [];
+  const alertas = data.alertasAcademicas;
+  const gestionEscenarios = data.gestionEscenarios ?? [];
+
+  const tasaMora = stats?.tasaMora ?? 0;
+
+  const maxSaldoMora = Math.max(...gestionEscenarios.map((e) => e.saldoMora), 1);
 
   return (
     <div className="space-y-8 pb-12">
@@ -135,15 +158,18 @@ export function Dashboard() {
         <p className="text-slate-500 text-sm font-medium">Este es el resumen general de la cartera y la gestión de hoy.</p>
       </header>
 
+      {/* ── Fila 1: 5 KPI cards ── */}
       {stats && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <StatCard title="Cartera total"        value={formatMillones(stats.carteraTotal ?? 0)}     trend={`${stats.tendencias?.carteraTotal ?? '+0%'} vs mes anterior`}    icon={Landmark}       color="blue"          areaData={evolucionFiltrada} />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+          <StatCard title="Cartera total"        value={formatMillones(stats.carteraTotal ?? 0)}     trend={`${stats.tendencias?.carteraTotal ?? '+0%'} vs mes anterior`}    icon={Landmark}       color="blue"    areaData={evolucionFiltrada} />
           <StatCard title="Cartera vencida"      value={formatMillones(stats.carteraVencida ?? 0)}   trend={`${stats.tendencias?.carteraVencida ?? '+0%'} vs mes anterior`}  icon={AlertCircle}    color="purple"  isBadTrend areaData={evolucionFiltrada} />
-          <StatCard title="Cartera al día"       value={formatMillones(stats.carteraAlDia ?? 0)}     trend={`${stats.tendencias?.carteraAlDia ?? '+0%'} vs mes anterior`}    icon={CircleCheckBig} color="emerald"       areaData={evolucionFiltrada} />
-          <StatCard title="Recuperación del mes" value={formatMillones(stats.recuperacionMes ?? 0)}  trend={`${stats.tendencias?.recuperacionMes ?? '+0%'} vs mes anterior`} icon={BarChart3}      color="indigo"        areaData={evolucionFiltrada} />
+          <StatCard title="Cartera al día"       value={formatMillones(stats.carteraAlDia ?? 0)}     trend={`${stats.tendencias?.carteraAlDia ?? '+0%'} vs mes anterior`}    icon={CircleCheckBig} color="emerald" areaData={evolucionFiltrada} />
+          <StatCard title="Recuperación del mes" value={formatMillones(stats.recuperacionMes ?? 0)}  trend={`${stats.tendencias?.recuperacionMes ?? '+0%'} vs mes anterior`} icon={BarChart3}      color="indigo"  areaData={evolucionFiltrada} />
+          <StatCard title="Tasa de mora"         value={`${tasaMora.toFixed(1)}%`}                   trend="del total de cartera"                                            icon={Percent}        color="orange"  isBadTrend areaData={evolucionFiltrada} />
         </div>
       )}
 
+      {/* ── Fila 2: Distribución + Evolución ── */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-12 xl:col-span-5 glass-card rounded-3xl p-8">
           <div className="flex items-center justify-between mb-6">
@@ -161,6 +187,7 @@ export function Dashboard() {
               const categoria = item?.categoria;
               const porcentaje = item?.porcentaje ?? 0;
               const monto = item?.monto ?? 0;
+              const creditos = item?.creditos ?? 0;
               const s = (categoria && CAT_STYLES[categoria]) ?? CAT_STYLES.A;
               return (
                 <div key={categoria ?? Math.random()} className="flex items-center gap-3">
@@ -175,9 +202,12 @@ export function Dashboard() {
                       <div className="h-full rounded-full" style={{ width: `${porcentaje}%`, backgroundColor: s.bar }} />
                     </div>
                   </div>
-                  <span className="text-xs font-bold text-slate-700 shrink-0 w-32 text-right" title={formatMillones(monto)}>
-                    {formatMillones(monto)}
-                  </span>
+                  <div className="text-right shrink-0 w-28">
+                    <span className="text-xs font-bold text-slate-700 block" title={formatMillones(monto)}>
+                      {formatMillones(monto)}
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-medium">{formatNum(creditos)} créditos</span>
+                  </div>
                   <div className={`px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 w-14 text-center ${s.badgeBg} ${s.badgeText}`}>
                     {formatPorcentaje(porcentaje)}
                   </div>
@@ -223,10 +253,7 @@ export function Dashboard() {
                 <option value={6}>Últimos 6 meses</option>
                 <option value={3}>Últimos 3 meses</option>
               </select>
-              <ChevronDown
-                size={14}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"
-              />
+              <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
             </div>
           </div>
           <div className="h-[260px] w-full">
@@ -244,34 +271,15 @@ export function Dashboard() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis
-                    dataKey="fecha"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }}
-                    tickFormatter={formatFechaCorta}
-                    dy={10}
-                  />
-                  <YAxis
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }}
-                    tickFormatter={(v: number) => formatMillones(v)}
-                  />
+                  <XAxis dataKey="fecha" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} tickFormatter={formatFechaCorta} dy={10} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} tickFormatter={(v: number) => formatMillones(v)} />
                   <Tooltip
                     contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
                     labelStyle={{ fontWeight: 'bold' }}
                     labelFormatter={(label) => formatFechaCorta(String(label))}
                     formatter={(value) => [formatMillones(Number(value)), 'Recuperado']}
                   />
-                  <Area
-                    type="monotone"
-                    dataKey="valor"
-                    stroke="#6366f1"
-                    strokeWidth={3}
-                    fillOpacity={1}
-                    fill="url(#colorValue)"
-                  />
+                  <Area type="monotone" dataKey="valor" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorValue)" />
                 </AreaChart>
               </ResponsiveContainer>
             )}
@@ -279,6 +287,94 @@ export function Dashboard() {
         </div>
       </div>
 
+      {/* ── Fila 3: Alertas académicas + Gestión activa por escenario ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        {/* Alertas académicas */}
+        <div className="lg:col-span-12 xl:col-span-5 glass-card rounded-3xl p-8">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-5">Alertas académicas</p>
+
+          {!alertas ? (
+            <p className="text-xs text-slate-400 font-medium">Sin datos disponibles.</p>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {([
+                { icon: GraduationCap, label: 'Bloqueos de matrícula activos', value: alertas.bloqueosMatricula,  color: 'text-red-500'    },
+                { icon: Award,         label: 'Diplomas retenidos',             value: alertas.diplomasRetenidos,  color: 'text-orange-500' },
+                { icon: Users,         label: 'Codeudores en riesgo',           value: alertas.codeudoresRiesgo,   color: 'text-red-500'    },
+                { icon: TrendingUp,    label: 'Mora crítica (+180d) activos',   value: alertas.moraCriticaActivos, color: 'text-orange-500' },
+                { icon: Clock,         label: 'Preventivos (vencen en 5d)',     value: alertas.preventivos5d,      color: 'text-amber-500'  },
+                { icon: FileText,      label: 'Acuerdos de pago activos',       value: alertas.acuerdosActivos,    color: 'text-slate-700'  },
+              ] as const).map(({ icon: Icon, label, value, color }) => (
+                <div key={label} className="flex items-center gap-3 py-3">
+                  <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center shrink-0">
+                    <Icon size={15} className="text-slate-400" />
+                  </div>
+                  <span className="text-xs text-slate-600 font-medium flex-1">{label}</span>
+                  <span className={`text-sm font-bold tabular-nums shrink-0 ${value === 0 ? 'text-slate-700' : color}`}>
+                    {formatNum(value)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Gestión activa por escenario */}
+        <div className="lg:col-span-12 xl:col-span-7 glass-card rounded-3xl p-8">
+          <div className="flex items-center gap-2 mb-6">
+            <h3 className="text-sm font-bold">Gestión activa por escenario</h3>
+            <Info size={14} className="text-slate-400" />
+          </div>
+
+          {gestionEscenarios.length === 0 ? (
+            <p className="text-xs text-slate-400 font-medium">Sin datos de gestión disponibles.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-100">
+                    <th className="text-left pb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Escenario</th>
+                    <th className="text-right pb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Créditos</th>
+                    <th className="pb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400 w-36">Saldo mora</th>
+                    <th className="text-right pb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Días mora prom.</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {gestionEscenarios.map((row) => {
+                    const color = ESCENARIO_COLORS[row.escenario] ?? '#6366f1';
+                    const barPct = (row.saldoMora / maxSaldoMora) * 100;
+                    return (
+                      <tr key={row.escenario} className="group hover:bg-slate-50/60 transition-colors">
+                        <td className="py-3 pr-4">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                            <span className="font-semibold text-slate-700 whitespace-nowrap">{row.escenario}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 text-right font-bold text-slate-800 pr-4">
+                          {formatNum(row.creditos)}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div className="h-full rounded-full transition-all" style={{ width: `${barPct}%`, backgroundColor: color }} />
+                            </div>
+                            <span className="font-bold text-slate-700 w-16 text-right shrink-0">{formatMillones(row.saldoMora)}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 text-right font-bold text-slate-800">
+                          {row.diasMoraPromedio > 0 ? `${row.diasMoraPromedio}d` : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -288,7 +384,7 @@ interface StatCardProps {
   value: string;
   trend: string;
   icon: typeof Landmark;
-  color: 'blue' | 'indigo' | 'purple' | 'emerald';
+  color: 'blue' | 'indigo' | 'purple' | 'emerald' | 'orange';
   isBadTrend?: boolean;
   areaData: EvolucionRecuperacionItem[];
 }
@@ -299,6 +395,7 @@ function StatCard({ title, value, trend, icon: Icon, color, isBadTrend, areaData
     indigo:  { icon: 'bg-indigo-50 text-indigo-500',   value: 'text-indigo-600',  stroke: '#6366f1' },
     purple:  { icon: 'bg-purple-50 text-purple-500',   value: 'text-purple-600',  stroke: '#a855f7' },
     emerald: { icon: 'bg-emerald-50 text-emerald-500', value: 'text-emerald-600', stroke: '#10b981' },
+    orange:  { icon: 'bg-orange-50 text-orange-500',   value: 'text-orange-600',  stroke: '#f97316' },
   };
   const c = colorMap[color] ?? colorMap.blue;
 

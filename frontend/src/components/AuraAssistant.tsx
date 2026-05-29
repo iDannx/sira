@@ -75,6 +75,7 @@ export function AuraAssistant() {
   const [isLoading, setIsLoading] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef  = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -153,6 +154,7 @@ export function AuraAssistant() {
       ]);
     } finally {
       setIsLoading(false);
+      setTimeout(() => inputRef.current?.focus(), 0);
     }
   };
 
@@ -180,7 +182,7 @@ export function AuraAssistant() {
               className="absolute -top-36 right-4 w-52 h-52 object-contain drop-shadow-2xl animate-float pointer-events-none z-10"
             />
 
-            <div className="w-[380px] h-[550px] glass-card rounded-3xl overflow-hidden flex flex-col shadow-2xl border border-white/60">
+            <div className="w-[440px] h-[630px] glass-card rounded-3xl overflow-hidden flex flex-col shadow-2xl border border-white/60">
               {/* Header */}
               <div className="bg-navy-dark pt-6 pb-4 px-4 text-white flex items-center justify-between">
                 <div>
@@ -247,6 +249,7 @@ export function AuraAssistant() {
               <div className="p-4 bg-white border-t border-slate-100">
                 <div className="relative">
                   <input
+                    ref={inputRef}
                     type="text"
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}

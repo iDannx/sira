@@ -233,12 +233,12 @@ const RANGOS_MORA: Record<string, [number, number | null]> = {
 };
 
 const SORT_COLS: Record<string, string> = {
-  nombre: "cl.primer_nombre || ' ' || cl.primer_apellido",
-  deudaTotal: 'c.saldo_total',
-  diasMora: 'c.dias_mora',
-  ultimoPago: 'c.fecha_ultimo_pago',
-  riesgo: 'c.calificacion',
-  estado: 'cr.estado',
+  nombre:     "CONCAT_WS(' ', cl.primer_nombre, cl.segundo_nombre, cl.primer_apellido, cl.segundo_apellido)",
+  deudaTotal: '(ca.saldo_capital + ca.saldo_intereses)',
+  diasMora:   'ca.dias_mora',
+  ultimoPago: 'up.fecha_ultimo_pago',
+  riesgo:     'ca.calificacion',
+  estado:     'cr.estado',
 };
 
 interface ClientesFilters {
@@ -268,27 +268,25 @@ const buildClientesWhere = (
   filters: ClientesFilters,
   fechaCorte: string,
 ): { whereSql: string; params: unknown[] } => {
-  const conditions: string[] = ['c.fecha_corte = $1'];
+  const conditions: string[] = ['ca.fecha_corte = $1'];
   const params: unknown[] = [fechaCorte];
 
   if (filters.search) {
     const raw = filters.search.trim();
     params.push(`%${raw}%`);
     const iRaw = params.length;
-    // Si parece un ID visible "C-XXXXXXXX" (o solo hex), busca también por
-    // prefijo del UUID del cliente.
     const idMatch = /^[Cc]-?([0-9A-Fa-f]+)$/.exec(raw);
     if (idMatch) {
       params.push(`${idMatch[1].toLowerCase()}%`);
       const iHex = params.length;
       conditions.push(
-        `((cl.primer_nombre || ' ' || cl.primer_apellido) ILIKE $${iRaw}
+        `(CONCAT_WS(' ', cl.primer_nombre, cl.segundo_nombre, cl.primer_apellido, cl.segundo_apellido) ILIKE $${iRaw}
           OR cl.numero_documento ILIKE $${iRaw}
           OR cl.id_cliente::text ILIKE $${iHex})`,
       );
     } else {
       conditions.push(
-        `((cl.primer_nombre || ' ' || cl.primer_apellido) ILIKE $${iRaw}
+        `(CONCAT_WS(' ', cl.primer_nombre, cl.segundo_nombre, cl.primer_apellido, cl.segundo_apellido) ILIKE $${iRaw}
           OR cl.numero_documento ILIKE $${iRaw})`,
       );
     }
@@ -298,15 +296,17 @@ const buildClientesWhere = (
     const cals = RIESGO_TO_CALIF[filters.riesgo];
     if (cals) {
       params.push(cals);
-      conditions.push(`c.calificacion = ANY($${params.length}::text[])`);
+      conditions.push(`ca.calificacion = ANY($${params.length}::text[])`);
     }
   }
 
   if (filters.estado) {
-    const dbEstado = ESTADO_TO_DB[filters.estado];
-    if (dbEstado) {
-      params.push(dbEstado);
-      conditions.push(`cr.estado = $${params.length}`);
+    if (filters.estado === 'Al día') {
+      conditions.push(`ca.dias_mora = 0 AND cr.estado NOT IN ('CANCELADO','CASTIGADO','JURIDICO')`);
+    } else if (filters.estado === 'En mora') {
+      conditions.push(`ca.dias_mora > 0 AND cr.estado NOT IN ('CANCELADO','CASTIGADO')`);
+    } else if (filters.estado === 'Castigada') {
+      conditions.push(`cr.estado IN ('CANCELADO','CASTIGADO','JURIDICO')`);
     }
   }
 
@@ -317,10 +317,10 @@ const buildClientesWhere = (
       if (max !== null) {
         params.push(min);
         params.push(max);
-        conditions.push(`c.dias_mora BETWEEN $${params.length - 1} AND $${params.length}`);
+        conditions.push(`ca.dias_mora BETWEEN $${params.length - 1} AND $${params.length}`);
       } else {
         params.push(min);
-        conditions.push(`c.dias_mora >= $${params.length}`);
+        conditions.push(`ca.dias_mora >= $${params.length}`);
       }
     }
   }
@@ -329,13 +329,13 @@ const buildClientesWhere = (
 };
 
 interface ClienteListRow {
-  id_cliente: string;
   nombre: string;
+  cliente_id: string;
   deuda_total: string | null;
   dias_mora: string | number | null;
   calificacion: string;
-  ultimo_pago: Date | string | null;
-  estado_credito: string;
+  ultimo_pago: string | null;
+  estado_display: string;
   total_count: string;
 }
 
@@ -349,14 +349,20 @@ interface ClienteListItem {
   estado: 'Al día' | 'En mora' | 'Castigada';
 }
 
+const getEstadoDisplay = (display: string): 'Al día' | 'En mora' | 'Castigada' => {
+  if (display === 'AL DIA') return 'Al día';
+  if (display === 'EN MORA') return 'En mora';
+  return 'Castigada';
+};
+
 const mapClienteListRow = (row: ClienteListRow): ClienteListItem => ({
-  id: formatClienteId(row.id_cliente),
+  id: row.cliente_id,
   nombre: (row.nombre ?? '').trim() || 'Sin nombre',
   deudaTotal: Math.round(numOrZero(row.deuda_total)),
   diasMora: numOrZero(row.dias_mora),
-  ultimoPago: fmtYmd(row.ultimo_pago),
+  ultimoPago: row.ultimo_pago || null,
   riesgo: getRiesgo(row.calificacion),
-  estado: getEstado(row.estado_credito),
+  estado: getEstadoDisplay(row.estado_display),
 });
 
 // =================================================================
@@ -482,18 +488,31 @@ export const listClientes = async (req: Request, res: Response, next: NextFuncti
 
     const orderCol = SORT_COLS[filters.sortBy];
     const sql = `
+      WITH ultimo_pago_por_credito AS (
+        SELECT id_credito, MAX(fecha_pago) AS fecha_ultimo_pago
+        FROM cartera.pagos
+        GROUP BY id_credito
+      )
       SELECT
-        cl.id_cliente,
-        TRIM(COALESCE(cl.primer_nombre, '') || ' ' || COALESCE(cl.primer_apellido, '')) AS nombre,
-        c.saldo_total          AS deuda_total,
-        c.dias_mora,
-        c.calificacion,
-        c.fecha_ultimo_pago    AS ultimo_pago,
-        cr.estado              AS estado_credito,
-        COUNT(*) OVER()        AS total_count
-      FROM cartera.cartera c
-      JOIN cartera.creditos cr ON cr.id_credito = c.id_credito
+        CONCAT_WS(' ', cl.primer_nombre, cl.segundo_nombre,
+                       cl.primer_apellido, cl.segundo_apellido) AS nombre,
+        'C-' || UPPER(LEFT(cl.id_cliente::text, 8))             AS cliente_id,
+        (ca.saldo_capital + ca.saldo_intereses)                 AS deuda_total,
+        ca.dias_mora,
+        ca.calificacion,
+        TO_CHAR(up.fecha_ultimo_pago, 'YYYY-MM-DD')             AS ultimo_pago,
+        CASE
+          WHEN cr.estado = 'CANCELADO'  THEN 'CANCELADO'
+          WHEN cr.estado = 'CASTIGADO'  THEN 'CASTIGADO'
+          WHEN cr.estado = 'JURIDICO'   THEN 'JURIDICO'
+          WHEN ca.dias_mora = 0         THEN 'AL DIA'
+          ELSE 'EN MORA'
+        END                                                     AS estado_display,
+        COUNT(*) OVER()                                         AS total_count
+      FROM cartera.cartera ca
+      JOIN cartera.creditos cr ON cr.id_credito = ca.id_credito
       JOIN cartera.clientes cl ON cl.id_cliente = cr.id_cliente
+      LEFT JOIN ultimo_pago_por_credito up ON up.id_credito = ca.id_credito
       WHERE ${whereSql}
       ORDER BY ${orderCol} ${filters.sortDir} NULLS LAST
       LIMIT $${params.length - 1} OFFSET $${params.length}
@@ -776,18 +795,31 @@ export const exportarClientes = async (req: Request, res: Response, next: NextFu
 
     const orderCol = SORT_COLS[filters.sortBy];
     const sql = `
+      WITH ultimo_pago_por_credito AS (
+        SELECT id_credito, MAX(fecha_pago) AS fecha_ultimo_pago
+        FROM cartera.pagos
+        GROUP BY id_credito
+      )
       SELECT
-        cl.id_cliente,
-        TRIM(COALESCE(cl.primer_nombre, '') || ' ' || COALESCE(cl.primer_apellido, '')) AS nombre,
-        c.saldo_total          AS deuda_total,
-        c.dias_mora,
-        c.calificacion,
-        c.fecha_ultimo_pago    AS ultimo_pago,
-        cr.estado              AS estado_credito,
-        0                      AS total_count
-      FROM cartera.cartera c
-      JOIN cartera.creditos cr ON cr.id_credito = c.id_credito
+        CONCAT_WS(' ', cl.primer_nombre, cl.segundo_nombre,
+                       cl.primer_apellido, cl.segundo_apellido) AS nombre,
+        'C-' || UPPER(LEFT(cl.id_cliente::text, 8))             AS cliente_id,
+        (ca.saldo_capital + ca.saldo_intereses)                 AS deuda_total,
+        ca.dias_mora,
+        ca.calificacion,
+        TO_CHAR(up.fecha_ultimo_pago, 'YYYY-MM-DD')             AS ultimo_pago,
+        CASE
+          WHEN cr.estado = 'CANCELADO'  THEN 'CANCELADO'
+          WHEN cr.estado = 'CASTIGADO'  THEN 'CASTIGADO'
+          WHEN cr.estado = 'JURIDICO'   THEN 'JURIDICO'
+          WHEN ca.dias_mora = 0         THEN 'AL DIA'
+          ELSE 'EN MORA'
+        END                                                     AS estado_display,
+        0                                                       AS total_count
+      FROM cartera.cartera ca
+      JOIN cartera.creditos cr ON cr.id_credito = ca.id_credito
       JOIN cartera.clientes cl ON cl.id_cliente = cr.id_cliente
+      LEFT JOIN ultimo_pago_por_credito up ON up.id_credito = ca.id_credito
       WHERE ${whereSql}
       ORDER BY ${orderCol} ${filters.sortDir} NULLS LAST
     `;
